@@ -984,6 +984,38 @@ function animatePetals(petals, elapsed) {
   petals.geometry.attributes.position.needsUpdate = true;
 }
 
+function initNav() {
+  const nav = document.querySelector(".site-nav");
+  const toggle = document.querySelector("[data-nav-toggle]");
+  const links = document.querySelector(".nav-links");
+  if (!nav || !toggle || !links) return;
+
+  const close = () => {
+    nav.classList.remove("nav-open");
+    toggle.setAttribute("aria-expanded", "false");
+    toggle.setAttribute("aria-label", "메뉴 열기");
+  };
+
+  toggle.addEventListener("click", () => {
+    const open = nav.classList.toggle("nav-open");
+    toggle.setAttribute("aria-expanded", String(open));
+    toggle.setAttribute("aria-label", open ? "메뉴 닫기" : "메뉴 열기");
+  });
+
+  // Close after navigating or hitting login.
+  links.addEventListener("click", (event) => {
+    if (event.target.closest("a, .nav-login")) close();
+  });
+
+  document.addEventListener("keydown", (event) => {
+    if (event.key === "Escape") close();
+  });
+
+  document.addEventListener("click", (event) => {
+    if (!nav.contains(event.target)) close();
+  });
+}
+
 function initScrollReveal() {
   const targets = document.querySelectorAll("[data-reveal]");
   if (!targets.length) return;
@@ -1015,6 +1047,7 @@ document.querySelectorAll("[data-copy-address]").forEach((button) => {
   button.addEventListener("click", copyAddress);
 });
 
+initNav();
 initScrollReveal();
 initLogin();
 initMinecraftScene();

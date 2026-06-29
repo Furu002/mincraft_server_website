@@ -30,15 +30,37 @@
     <meta name="twitter:image" content="https://nfoifsb.kr/assets/hero-world.png" />
 
     <title>nfoifsb.kr - Minecraft Server</title>
+
+    <script type="application/ld+json">
+      {
+        "@context": "https://schema.org",
+        "@type": "WebSite",
+        "name": "nfoifsb.kr",
+        "url": "https://nfoifsb.kr/",
+        "description": "Paper 26.1.2 기반의 Minecraft 생존 서버. 서버 상태와 접속 정보 제공.",
+        "inLanguage": "ko"
+      }
+    </script>
   </head>
   <body>
     <div id="app">
+      <a class="skip-link" href="#top">본문으로 건너뛰기</a>
       <header class="site-nav" aria-label="Primary navigation">
         <a class="brand" href="#top" aria-label="nfoifsb home">
           <img src="/assets/server-icon.png" alt="" />
           <span>nfoifsb</span>
         </a>
-        <nav class="nav-links" aria-label="Page sections">
+        <button
+          class="nav-toggle"
+          type="button"
+          aria-expanded="false"
+          aria-controls="primary-nav"
+          aria-label="메뉴 열기"
+          data-nav-toggle
+        >
+          <span aria-hidden="true">☰</span>
+        </button>
+        <nav class="nav-links" id="primary-nav" aria-label="Page sections">
           <a href="#status">Status</a>
           <a href="#plugins">Plugins</a>
           <a href="#rules">Rules</a>
