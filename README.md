@@ -1,69 +1,99 @@
-# nfoifsb.kr Minecraft Site
+# nfoifsb.kr Minecraft Website
 
-`nfoifsb.kr` 마인크래프트 서버용 정적 웹사이트입니다.
+Minecraft 서버와 웹사이트가 같은 도메인에서 충돌하지 않게 분리해서 운영한다.
 
-루트 도메인 `nfoifsb.kr`은 마크 서버 접속 주소로 계속 쓰고, 웹사이트는 우선 CloudFront 기본 주소로 공개하거나 나중에 `www.nfoifsb.kr`에 붙이는 구성을 권장합니다.
+## Domain Rule
 
-## 로컬 실행
+절대 바꾸면 안 되는 기본 규칙:
+
+```text
+nfoifsb.kr      -> Minecraft 서버 접속 주소
+www.nfoifsb.kr  -> 웹사이트 주소
+```
+
+현재 확인된 Minecraft 루트 도메인 DNS:
+
+```text
+Type: A
+Host: @
+Value: 114.201.255.139
+```
+
+`nfoifsb.kr` 루트 A 레코드는 Minecraft 서버용이다. 이 값을 CloudFront, S3, AWS 웹사이트 IP로 바꾸면 Minecraft 접속이 깨질 수 있다.
+
+웹사이트는 아래 CloudFront 배포를 사용한다.
+
+```text
+https://d199dteepu5fz2.cloudfront.net/
+```
+
+커스텀 웹 주소를 붙일 때는 `www.nfoifsb.kr`만 사용한다.
+
+## Gabia DNS
+
+Gabia DNS에는 최종적으로 이렇게 둔다.
+
+```text
+Type   Host  Value
+A      @     114.201.255.139
+CNAME  www   d199dteepu5fz2.cloudfront.net.
+```
+
+중요:
+
+- `@` 또는 빈 호스트의 A 레코드는 Minecraft 서버용이다.
+- `www` CNAME만 웹사이트용이다.
+- `nfoifsb.kr` 루트에 CloudFront CNAME을 넣지 않는다.
+- `nfoifsb.kr` 루트 A 레코드를 삭제하지 않는다.
+
+## AWS CloudFront Custom Domain
+
+`www.nfoifsb.kr`로 HTTPS 웹사이트를 열려면 CloudFront에도 `www.nfoifsb.kr`를 등록해야 한다.
+
+필요한 AWS 설정:
+
+1. ACM 인증서를 `us-east-1` 리전에 만든다.
+2. 인증서 도메인은 `www.nfoifsb.kr`로 만든다.
+3. ACM이 주는 DNS validation CNAME을 Gabia에 추가한다.
+4. 인증서가 발급되면 CloudFront distribution의 Alternate domain name에 `www.nfoifsb.kr`를 추가한다.
+5. CloudFront viewer certificate로 위 ACM 인증서를 선택한다.
+6. Gabia에 `www -> d199dteepu5fz2.cloudfront.net.` CNAME을 추가한다.
+
+이 순서를 지켜야 `https://www.nfoifsb.kr`가 정상 동작한다.
+
+## Local Development
 
 ```powershell
 npm install
 npm run dev
 ```
 
-로컬 주소:
+Local URL:
 
 ```text
 http://127.0.0.1:5173/
 ```
 
-## 빌드
+## Build
 
 ```powershell
 npm run build
 ```
 
-결과물은 `dist/`에 생성됩니다.
+Build output is created in `dist/`.
 
-## AWS 배포
+## Deploy
 
-이 프로젝트는 AWS CLI 없이도 Node 스크립트로 배포할 수 있습니다.
-
-먼저 AWS 인증 정보를 설정해야 합니다. 예:
+AWS credentials are required before running the deploy script.
 
 ```powershell
 $env:AWS_ACCESS_KEY_ID="..."
 $env:AWS_SECRET_ACCESS_KEY="..."
 $env:AWS_REGION="ap-northeast-2"
-```
-
-그 다음:
-
-```powershell
 npm run deploy:aws
 ```
 
-배포 스크립트가 하는 일:
-
-- S3 버킷 생성 또는 재사용
-- S3 public access 차단
-- CloudFront Origin Access Control 생성 또는 재사용
-- CloudFront 배포 생성 또는 재사용
-- `dist/` 업로드
-- CloudFront 캐시 무효화
-- `deploy-output.json`에 배포 URL 저장
-
-배포 후 우선 이 주소로 접속합니다:
-
-```text
-https://<cloudfront_domain_name>
-```
-
-## www.nfoifsb.kr 연결
-
-`www.nfoifsb.kr`까지 붙이려면 CloudFront용 ACM 인증서가 필요합니다. 인증서는 반드시 `us-east-1` 리전에 만들어야 합니다.
-
-인증서가 준비되면 첫 배포 전에 이렇게 실행할 수 있습니다:
+Optional custom domain deploy:
 
 ```powershell
 $env:SITE_DOMAIN="www.nfoifsb.kr"
@@ -71,22 +101,4 @@ $env:CERTIFICATE_ARN="arn:aws:acm:us-east-1:ACCOUNT_ID:certificate/CERT_ID"
 npm run deploy:aws
 ```
 
-배포 후 가비아 DNS에는 이런 CNAME을 추가합니다:
-
-```text
-타입: CNAME
-호스트: www
-값: <cloudfront_domain_name>
-```
-
-주의: `nfoifsb.kr` 루트 A 레코드는 마크 서버용이므로 웹사이트용으로 바꾸지 마세요.
-
-## Terraform 구성
-
-Terraform으로 관리하고 싶으면 `infra/terraform`도 준비되어 있습니다.
-
-```powershell
-cd infra\terraform
-terraform init
-terraform apply
-```
+Keep `nfoifsb.kr` reserved for Minecraft. Use `www.nfoifsb.kr` for the website.
