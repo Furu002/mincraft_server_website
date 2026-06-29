@@ -984,6 +984,49 @@ function animatePetals(petals, elapsed) {
   petals.geometry.attributes.position.needsUpdate = true;
 }
 
+function initTheme() {
+  const toggle = document.querySelector("[data-theme-toggle]");
+  if (!toggle) return;
+
+  const root = document.documentElement;
+  const icons = toggle.querySelectorAll("[data-theme-icon]");
+  const systemDark = window.matchMedia("(prefers-color-scheme: dark)");
+  const resolved = () =>
+    root.getAttribute("data-theme") || (systemDark.matches ? "dark" : "light");
+
+  const sync = () => {
+    const theme = resolved();
+    icons.forEach((ic) => {
+      ic.hidden = ic.dataset.themeIcon !== theme;
+    });
+    toggle.setAttribute(
+      "aria-label",
+      theme === "dark" ? "라이트 모드로 전환" : "다크 모드로 전환",
+    );
+    document.querySelectorAll('meta[name="theme-color"]').forEach((m) => {
+      m.setAttribute("content", theme === "dark" ? "#0d1411" : "#f5f5f7");
+    });
+  };
+
+  toggle.addEventListener("click", () => {
+    const next = resolved() === "dark" ? "light" : "dark";
+    root.setAttribute("data-theme", next);
+    try {
+      localStorage.setItem("nfoifsb.theme", next);
+    } catch {
+      // Toggle still works for this session without persistence.
+    }
+    sync();
+  });
+
+  // Follow OS changes only while the user hasn't pinned a theme.
+  systemDark.addEventListener("change", () => {
+    if (!root.getAttribute("data-theme")) sync();
+  });
+
+  sync();
+}
+
 function initNav() {
   const nav = document.querySelector(".site-nav");
   const toggle = document.querySelector("[data-nav-toggle]");
@@ -1047,6 +1090,7 @@ document.querySelectorAll("[data-copy-address]").forEach((button) => {
   button.addEventListener("click", copyAddress);
 });
 
+initTheme();
 initNav();
 initScrollReveal();
 initLogin();
