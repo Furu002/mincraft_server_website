@@ -4,6 +4,16 @@
 
 루트 도메인 `nfoifsb.kr`은 마크 서버 접속 주소로 계속 쓰고, 웹사이트는 우선 CloudFront 기본 주소로 공개하거나 나중에 `www.nfoifsb.kr`에 붙이는 구성을 권장합니다.
 
+## 사이트 기능
+
+- Three.js 기반 3D 마인크래프트 히어로 씬 (Data Saver / 모션 최소화 시 자동 폴백)
+- mcstatus.io API 실시간 서버 상태 (접속자 수, 버전, 온라인 표시)
+- 서버 주소 클립보드 복사 (`복사됨 ✓` 피드백)
+- 마인크래프트 닉네임 로그인 UI (localStorage 닉네임 기억)
+- 스크롤 등장 애니메이션, hover 인터랙션, 모바일 햄버거 메뉴
+- 접근성: `prefers-reduced-motion` 존중, 키보드 포커스 링, 본문 건너뛰기 링크
+- SEO/공유: Open Graph · Twitter Card · JSON-LD 메타
+
 ## 로컬 실행
 
 ```powershell

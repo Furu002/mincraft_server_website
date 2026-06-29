@@ -31,7 +31,20 @@ function fallbackCopy(text) {
   return copied;
 }
 
-async function copyAddress() {
+function flashButton(button) {
+  if (!button || button.dataset.flashing) return;
+  const original = button.innerHTML;
+  button.dataset.flashing = "1";
+  button.innerHTML = "복사됨 ✓";
+  window.setTimeout(() => {
+    button.innerHTML = original;
+    delete button.dataset.flashing;
+  }, 1400);
+}
+
+async function copyAddress(event) {
+  // Capture now: event.currentTarget is null once dispatch ends (before any await resolves).
+  const button = event?.currentTarget;
   let copied = false;
 
   try {
@@ -52,6 +65,7 @@ async function copyAddress() {
   }
 
   if (copied) {
+    flashButton(button);
     if (copyFeedback) copyFeedback.textContent = "복사 완료. 마크 서버 주소에 붙여넣으면 돼.";
   } else if (copyFeedback) {
     copyFeedback.textContent = `복사가 막히면 직접 입력: ${SERVER_ADDRESS}`;
@@ -761,6 +775,12 @@ function initMinecraftScene() {
   const canvas = document.querySelector("#minecraft-scene");
   if (!(canvas instanceof HTMLCanvasElement)) return;
 
+  // Skip the heavy WebGL scene on Data Saver — the CSS gradient sky stands in.
+  if (navigator.connection?.saveData) {
+    canvas.remove();
+    return;
+  }
+
   const reduceMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
   const renderer = new THREE.WebGLRenderer({
     canvas,
@@ -964,10 +984,71 @@ function animatePetals(petals, elapsed) {
   petals.geometry.attributes.position.needsUpdate = true;
 }
 
+function initNav() {
+  const nav = document.querySelector(".site-nav");
+  const toggle = document.querySelector("[data-nav-toggle]");
+  const links = document.querySelector(".nav-links");
+  if (!nav || !toggle || !links) return;
+
+  const close = () => {
+    nav.classList.remove("nav-open");
+    toggle.setAttribute("aria-expanded", "false");
+    toggle.setAttribute("aria-label", "메뉴 열기");
+  };
+
+  toggle.addEventListener("click", () => {
+    const open = nav.classList.toggle("nav-open");
+    toggle.setAttribute("aria-expanded", String(open));
+    toggle.setAttribute("aria-label", open ? "메뉴 닫기" : "메뉴 열기");
+  });
+
+  // Close after navigating or hitting login.
+  links.addEventListener("click", (event) => {
+    if (event.target.closest("a, .nav-login")) close();
+  });
+
+  document.addEventListener("keydown", (event) => {
+    if (event.key === "Escape") close();
+  });
+
+  document.addEventListener("click", (event) => {
+    if (!nav.contains(event.target)) close();
+  });
+}
+
+function initScrollReveal() {
+  const targets = document.querySelectorAll("[data-reveal]");
+  if (!targets.length) return;
+
+  const reduceMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+  // Opt into the hidden start state only now that JS runs, so no-JS visitors keep their content.
+  document.documentElement.classList.add("js-reveal");
+
+  if (reduceMotion || typeof IntersectionObserver === "undefined") {
+    targets.forEach((el) => el.classList.add("is-visible"));
+    return;
+  }
+
+  const observer = new IntersectionObserver(
+    (entries, obs) => {
+      entries.forEach((entry) => {
+        if (!entry.isIntersecting) return;
+        entry.target.classList.add("is-visible");
+        obs.unobserve(entry.target);
+      });
+    },
+    { threshold: 0.12, rootMargin: "0px 0px -8% 0px" },
+  );
+
+  targets.forEach((el) => observer.observe(el));
+}
+
 document.querySelectorAll("[data-copy-address]").forEach((button) => {
   button.addEventListener("click", copyAddress);
 });
 
+initNav();
+initScrollReveal();
 initLogin();
 initMinecraftScene();
 refreshStatus();
