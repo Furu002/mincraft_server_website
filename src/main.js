@@ -964,10 +964,38 @@ function animatePetals(petals, elapsed) {
   petals.geometry.attributes.position.needsUpdate = true;
 }
 
+function initScrollReveal() {
+  const targets = document.querySelectorAll("[data-reveal]");
+  if (!targets.length) return;
+
+  const reduceMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+  // Opt into the hidden start state only now that JS runs, so no-JS visitors keep their content.
+  document.documentElement.classList.add("js-reveal");
+
+  if (reduceMotion || typeof IntersectionObserver === "undefined") {
+    targets.forEach((el) => el.classList.add("is-visible"));
+    return;
+  }
+
+  const observer = new IntersectionObserver(
+    (entries, obs) => {
+      entries.forEach((entry) => {
+        if (!entry.isIntersecting) return;
+        entry.target.classList.add("is-visible");
+        obs.unobserve(entry.target);
+      });
+    },
+    { threshold: 0.12, rootMargin: "0px 0px -8% 0px" },
+  );
+
+  targets.forEach((el) => observer.observe(el));
+}
+
 document.querySelectorAll("[data-copy-address]").forEach((button) => {
   button.addEventListener("click", copyAddress);
 });
 
+initScrollReveal();
 initLogin();
 initMinecraftScene();
 refreshStatus();
