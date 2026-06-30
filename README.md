@@ -98,24 +98,25 @@ https://<cloudfront_domain_name>
 
 ## GitHub Actions 자동 배포
 
-`.github/workflows/deploy-aws.yml` 워크플로가 `main` 브랜치에 push될 때 자동으로 `npm run deploy:aws`를 실행합니다. GitHub의 `Settings` > `Secrets and variables` > `Actions`에 아래 Repository secrets를 등록해야 합니다.
-
-필수:
+`.github/workflows/deploy-aws.yml` 워크플로가 `main` 브랜치에 push될 때 자동으로 `npm run deploy:aws`를 실행합니다. GitHub Actions는 AWS 장기 액세스 키 대신 OIDC로 아래 IAM Role을 assume합니다.
 
 ```text
-AWS_ACCESS_KEY_ID
-AWS_SECRET_ACCESS_KEY
+arn:aws:iam::358982198253:role/GitHubActionsMincraftServerWebsiteDeployRole
 ```
+
+필수 Repository secret은 없습니다. 필요하면 GitHub의 `Settings` > `Secrets and variables` > `Actions`에서 아래 선택 secret만 등록합니다.
 
 선택:
 
 ```text
 AWS_REGION              # 기본값: ap-northeast-2
 VITE_GOOGLE_CLIENT_ID   # Google 로그인 버튼 활성화
-SITE_BUCKET             # 고정 S3 버킷명을 쓰고 싶을 때
+SITE_BUCKET             # 기본값: nfoifsb-minecraft-site-358982198253
 SITE_DOMAIN             # 예: www.nfoifsb.kr
 CERTIFICATE_ARN         # SITE_DOMAIN 사용 시 필수, us-east-1 ACM 인증서 ARN
 ```
+
+`SITE_BUCKET`을 기본값이 아닌 이름으로 바꾸려면 AWS IAM Role 정책의 S3 bucket ARN도 같이 바꿔야 합니다.
 
 수동으로 다시 배포하고 싶으면 GitHub `Actions` 탭에서 `Deploy website to AWS` 워크플로를 `Run workflow`로 실행할 수 있습니다.
 
