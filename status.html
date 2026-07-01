@@ -1,0 +1,152 @@
+<!doctype html>
+<html lang="ko">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta
+      name="description"
+      content="nfoifsb.kr Minecraft server live status, cached fallback, player count, response time, and MOTD."
+    />
+    <meta name="theme-color" content="#f5f5f7" media="(prefers-color-scheme: light)" />
+    <meta name="theme-color" content="#0d1411" media="(prefers-color-scheme: dark)" />
+    <link rel="icon" type="image/png" href="/assets/server-icon.png" />
+    <title>Status - nfoifsb.kr</title>
+    <script>
+      (function () {
+        try {
+          var t = localStorage.getItem("nfoifsb.theme");
+          if (t === "dark" || t === "light")
+            document.documentElement.setAttribute("data-theme", t);
+        } catch (e) {}
+      })();
+    </script>
+  </head>
+  <body>
+    <div id="app">
+      <a class="skip-link" href="#content">본문으로 건너뛰기</a>
+      <header class="site-nav" aria-label="Primary navigation">
+        <a class="brand" href="/" aria-label="nfoifsb home">
+          <img src="/assets/server-icon.png" alt="" />
+          <span>nfoifsb</span>
+        </a>
+        <button class="theme-toggle" type="button" aria-label="테마 전환" data-theme-toggle>
+          <svg class="ic" data-theme-icon="dark" viewBox="0 0 24 24" aria-hidden="true">
+            <circle cx="12" cy="12" r="4.2" />
+            <path d="M12 2v3M12 19v3M2 12h3M19 12h3M4.5 4.5l2 2M17.5 17.5l2 2M19.5 4.5l-2 2M6.5 17.5l-2 2" />
+          </svg>
+          <svg class="ic" data-theme-icon="light" viewBox="0 0 24 24" aria-hidden="true" hidden>
+            <path d="M21 12.8A8 8 0 1 1 11.2 3a6 6 0 0 0 9.8 9.8z" />
+          </svg>
+        </button>
+        <button
+          class="nav-toggle"
+          type="button"
+          aria-expanded="false"
+          aria-controls="primary-nav"
+          aria-label="메뉴 열기"
+          data-nav-toggle
+        >
+          <span aria-hidden="true">☰</span>
+        </button>
+        <nav class="nav-links" id="primary-nav" aria-label="Site pages">
+          <a href="/status.html" data-section-link="status">Status</a>
+          <a href="/plugins.html" data-section-link="plugins">Plugins</a>
+          <a href="/rules.html" data-section-link="rules">Rules</a>
+          <a href="/join.html" data-section-link="join">Join</a>
+          <a class="nav-login" href="/login.html" data-open-login>Login</a>
+        </nav>
+      </header>
+
+      <main id="content" class="screen-main">
+        <section class="status-band page-screen" aria-labelledby="status-title">
+          <div class="section-heading" data-reveal>
+            <p class="eyebrow">Live status</p>
+            <h1 id="status-title"><span>서버 상태를</span> <span>바로 확인.</span></h1>
+          </div>
+
+          <div class="status-layout" data-reveal>
+            <article class="status-panel">
+              <div class="status-topline">
+                <span class="status-dot" data-status-dot></span>
+                <span data-status-label>상태 확인 중</span>
+              </div>
+              <strong data-player-count>-- / 10</strong>
+              <span class="status-note">현재 접속자 / 최대 인원</span>
+              <div class="meter" aria-hidden="true">
+                <span data-player-meter></span>
+              </div>
+            </article>
+
+            <div class="detail-grid" aria-label="Server details">
+              <article>
+                <svg class="ic" viewBox="0 0 24 24" aria-hidden="true">
+                  <circle cx="12" cy="12" r="9" />
+                  <path d="M3 12h18M12 3c2.5 2.5 2.5 16 0 18M12 3c-2.5 2.5-2.5 16 0 18" />
+                </svg>
+                <span>Address</span>
+                <strong>nfoifsb.kr</strong>
+              </article>
+              <article>
+                <svg class="ic" viewBox="0 0 24 24" aria-hidden="true">
+                  <path d="M12 2l9 5v10l-9 5-9-5V7z" />
+                  <path d="M12 2v20M3 7l9 5 9-5" />
+                </svg>
+                <span>Version</span>
+                <strong data-version>Paper 26.1.2</strong>
+              </article>
+              <article>
+                <svg class="ic" viewBox="0 0 24 24" aria-hidden="true">
+                  <path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5" />
+                </svg>
+                <span>World Border</span>
+                <strong>59,999,968</strong>
+              </article>
+              <article>
+                <svg class="ic" viewBox="0 0 24 24" aria-hidden="true">
+                  <rect x="6" y="6" width="12" height="12" rx="1" />
+                  <rect x="9" y="9" width="6" height="6" rx="1" />
+                  <path d="M9 2v3M15 2v3M9 19v3M15 19v3M2 9h3M2 15h3M19 9h3M19 15h3" />
+                </svg>
+                <span>Memory</span>
+                <strong>4 GB</strong>
+              </article>
+            </div>
+          </div>
+
+          <div class="section-dashboard status-dashboard" data-reveal>
+            <article class="dashboard-card">
+              <span>Status cache</span>
+              <strong data-cache-state>실시간 확인 준비 중</strong>
+              <p data-last-checked>상태 값을 아직 받아오지 않았습니다.</p>
+            </article>
+            <article class="dashboard-card">
+              <span>Response</span>
+              <strong data-latency>-- ms</strong>
+              <p data-status-health>API 응답을 기다리고 있습니다.</p>
+            </article>
+            <article class="dashboard-card">
+              <span>Players</span>
+              <strong data-player-summary>--</strong>
+              <p>접속자 수와 슬롯 사용률을 같이 표시합니다.</p>
+            </article>
+            <article class="dashboard-card dashboard-wide">
+              <span>Message of the day</span>
+              <strong>Server MOTD</strong>
+              <p data-motd>서버 메시지를 불러오고 있습니다.</p>
+            </article>
+          </div>
+        </section>
+      </main>
+
+      <footer class="site-footer">
+        <span class="footer-brand">
+          <img src="/assets/server-icon.png" alt="" />
+          nfoifsb.kr
+        </span>
+        <span>Paper 26.1.2 · Minecraft 생존 서버</span>
+        <a href="#content">맨 위로</a>
+      </footer>
+    </div>
+    <script type="module" src="/src/main.js"></script>
+  </body>
+</html>

@@ -21,8 +21,12 @@ const sectionLinks = document.querySelectorAll("[data-section-link]");
 const AUTH_STORAGE_KEY = "nfoifsb.googleUser";
 const AUTH_EVENT_KEY = "nfoifsb.authEvent";
 const STATUS_CACHE_KEY = "nfoifsb.statusCache";
-const NAV_HASH_KEY = "nfoifsb.activeSection";
-const SECTION_HASHES = new Set(["#status", "#plugins", "#rules", "#join"]);
+const PAGE_LINKS = new Map([
+  ["/status.html", "status"],
+  ["/plugins.html", "plugins"],
+  ["/rules.html", "rules"],
+  ["/join.html", "join"],
+]);
 
 let sessionUser = null;
 
@@ -334,47 +338,25 @@ function initNav() {
   });
 }
 
-function setActiveSection(hash) {
+function getCurrentPageKey() {
+  const path = window.location.pathname.endsWith("/")
+    ? `${window.location.pathname}index.html`
+    : window.location.pathname;
+  return PAGE_LINKS.get(path) || null;
+}
+
+function setActivePage(pageKey) {
   sectionLinks.forEach((link) => {
-    const active = link.getAttribute("href") === hash;
+    const active = link.dataset.sectionLink === pageKey;
     link.classList.toggle("is-active", active);
     if (active) link.setAttribute("aria-current", "page");
     else link.removeAttribute("aria-current");
   });
-
-  if (SECTION_HASHES.has(hash)) {
-    try {
-      localStorage.setItem(NAV_HASH_KEY, hash);
-    } catch {
-      // Active nav still works without persistence.
-    }
-  }
 }
 
-function initSectionNavigation() {
+function initPageNavigation() {
   if (!sectionLinks.length) return;
-
-  sectionLinks.forEach((link) => {
-    link.addEventListener("click", () => {
-      const hash = link.getAttribute("href");
-      if (SECTION_HASHES.has(hash)) setActiveSection(hash);
-    });
-  });
-
-  window.addEventListener("hashchange", () => {
-    setActiveSection(window.location.hash);
-  });
-
-  if (SECTION_HASHES.has(window.location.hash)) {
-    setActiveSection(window.location.hash);
-  } else {
-    try {
-      const storedHash = localStorage.getItem(NAV_HASH_KEY);
-      if (SECTION_HASHES.has(storedHash)) setActiveSection(storedHash);
-    } catch {
-      // No persisted active section available.
-    }
-  }
+  setActivePage(getCurrentPageKey());
 }
 
 function initScrollReveal() {
@@ -436,9 +418,11 @@ document.querySelectorAll("[data-copy-address]").forEach((button) => {
 
 initTheme();
 initNav();
-initSectionNavigation();
+initPageNavigation();
 initScrollReveal();
 initLogin();
 deferSceneLoad();
-refreshStatus();
-setInterval(refreshStatus, 60000);
+if (statusDot || cacheState) {
+  refreshStatus();
+  setInterval(refreshStatus, 60000);
+}
