@@ -520,6 +520,7 @@ function addCabin(world, materials, surface) {
   const light = new THREE.PointLight(0xffb25c, 1.7, 7, 2.2);
   light.position.set(originX + 3, ground + 3.2, originZ + 4.7);
   world.add(torch, light);
+  return light;
 }
 
 function addGroundDetails(world, materials, surface) {
@@ -633,13 +634,72 @@ function addSky(scene, materials) {
   sun.position.set(-34, 35, -46);
   sun.scale.set(9, 9, 1);
   scene.add(sky, sun);
+  return { sky, sun };
 }
 
 // Minecraft title-screen panorama: camera slowly orbits the world center,
 // always looking inward, with a faint vertical sway. reduceMotion pins a frame.
 const PANORAMA_CENTER = new THREE.Vector3(-1, 1.4, 4);
 
-function frameCamera(camera, canvas, elapsed, reduceMotion) {
+// One full day cycle in seconds — kept slow so it reads as ambient, not a clock.
+const DAY_PERIOD = 120;
+
+// Sky/light palette endpoints, lerped by how high the sun sits.
+const DAY = {
+  top: new THREE.Color(0x74bff0),
+  horizon: new THREE.Color(0xd7f2ff),
+  low: new THREE.Color(0xf3fbff),
+  sun: new THREE.Color(0xfff1c7),
+};
+const NIGHT = {
+  top: new THREE.Color(0x0b1b3a),
+  horizon: new THREE.Color(0x1b2c52),
+  low: new THREE.Color(0x2a3860),
+  sun: new THREE.Color(0x43506e),
+};
+const GOLD = new THREE.Color(0xff9d5c);
+
+const clamp01 = (v) => Math.max(0, Math.min(1, v));
+
+// Scratch colors reused every frame so the loop never allocates.
+const _top = new THREE.Color();
+const _horizon = new THREE.Color();
+const _low = new THREE.Color();
+const _sun = new THREE.Color();
+
+// Drives sky, sun, ambient and torch from a single sun elevation so dusk/dawn
+// glow, night dimming, and torch flare-up all stay in sync.
+function applyDayNight(env, scene, elapsed, reduceMotion) {
+  const phase = reduceMotion ? Math.PI * 0.32 : (elapsed / DAY_PERIOD) * Math.PI * 2;
+  const elev = Math.sin(phase); // +1 noon, -1 midnight
+  const day = clamp01((elev + 0.15) / 0.6); // 0 below horizon, 1 sun well up
+  const gold = Math.max(0, 1 - Math.abs(elev) / 0.35); // horizon warmth at dawn/dusk
+
+  _top.lerpColors(NIGHT.top, DAY.top, day);
+  _horizon.lerpColors(NIGHT.horizon, DAY.horizon, day).lerp(GOLD, gold * 0.55);
+  _low.lerpColors(NIGHT.low, DAY.low, day).lerp(GOLD, gold * 0.32);
+  _sun.lerpColors(NIGHT.sun, DAY.sun, day).lerp(GOLD, gold * 0.45);
+
+  const u = env.sky.material.uniforms;
+  u.uTop.value.copy(_top);
+  u.uHorizon.value.copy(_horizon);
+  u.uLow.value.copy(_low);
+
+  scene.background.copy(_top);
+  scene.fog.color.copy(_horizon);
+
+  // Sun sprite arcs across the sky and fades out once it dips below the horizon.
+  env.sun.position.set(Math.cos(phase) * -46, 8 + elev * 40, -46);
+  env.sun.material.opacity = clamp01(day * 1.4);
+
+  env.sunLight.color.copy(_sun);
+  env.sunLight.intensity = 0.35 + day * 3.0;
+  env.sunLight.position.set(-26 + Math.cos(phase) * 8, 6 + elev * 34, 24);
+  env.hemiLight.intensity = 0.5 + day * 1.05;
+  env.torchLight.intensity = 1.4 + (1 - day) * 2.4;
+}
+
+function frameCamera(camera, canvas, elapsed, reduceMotion, pointer) {
   const aspect = canvas.clientWidth / Math.max(canvas.clientHeight, 1);
   const portrait = aspect < 0.85;
   const radius = portrait ? 26 : 24;
@@ -651,11 +711,15 @@ function frameCamera(camera, canvas, elapsed, reduceMotion) {
   const sway = reduceMotion ? 0 : Math.sin(elapsed * 0.22) * 0.45;
 
   camera.position.set(
-    PANORAMA_CENTER.x + Math.sin(angle) * radius,
-    height + sway,
+    PANORAMA_CENTER.x + Math.sin(angle) * radius + pointer.x * 2.4,
+    height + sway - pointer.y * 1.5,
     PANORAMA_CENTER.z + Math.cos(angle) * radius,
   );
-  camera.lookAt(PANORAMA_CENTER);
+  camera.lookAt(
+    PANORAMA_CENTER.x + pointer.x * 0.9,
+    PANORAMA_CENTER.y - pointer.y * 0.5,
+    PANORAMA_CENTER.z,
+  );
 }
 
 // canvas is resolved and guarded (saveData / existence) by the caller in main.js.
@@ -682,7 +746,7 @@ export function initMinecraftScene(canvas) {
 
   const camera = new THREE.PerspectiveCamera(52, 1, 0.1, 180);
   const materials = createMaterials();
-  addSky(scene, materials);
+  const skyEnv = addSky(scene, materials);
 
   const world = new THREE.Group();
   scene.add(world);
@@ -690,7 +754,7 @@ export function initMinecraftScene(canvas) {
   const { surface, waterTiles } = addTerrain(world, materials);
   const waterMaterial = addWater(world, waterTiles);
   addTrees(world, materials, surface);
-  addCabin(world, materials, surface);
+  const torchLight = addCabin(world, materials, surface);
   addGroundDetails(world, materials, surface);
   addLilyPads(world, materials);
 
@@ -713,11 +777,27 @@ export function initMinecraftScene(canvas) {
   sun.shadow.camera.near = 1;
   sun.shadow.camera.far = 90;
   scene.add(sun);
-  scene.add(new THREE.HemisphereLight(0xe6f6ff, 0x587047, 1.55));
+  const hemi = new THREE.HemisphereLight(0xe6f6ff, 0x587047, 1.55);
+  scene.add(hemi);
 
   const fill = new THREE.DirectionalLight(0xa9d6ff, 0.58);
   fill.position.set(22, 11, -18);
   scene.add(fill);
+
+  const env = { ...skyEnv, sunLight: sun, hemiLight: hemi, torchLight };
+
+  // Pointer parallax: a slow lerp toward the cursor for depth. Skipped on
+  // reduce-motion and coarse (touch) pointers where there is no hover.
+  const pointer = { x: 0, y: 0 };
+  const pointerTarget = { x: 0, y: 0 };
+  const coarsePointer = window.matchMedia("(pointer: coarse)").matches;
+  const parallax = !reduceMotion && !coarsePointer;
+  if (parallax) {
+    window.addEventListener("pointermove", (event) => {
+      pointerTarget.x = (event.clientX / window.innerWidth) * 2 - 1;
+      pointerTarget.y = (event.clientY / window.innerHeight) * 2 - 1;
+    });
+  }
 
   const startTime = performance.now();
   let frameId = 0;
@@ -735,7 +815,13 @@ export function initMinecraftScene(canvas) {
   function animate() {
     const elapsed = (performance.now() - startTime) / 1000;
     resize();
-    frameCamera(camera, canvas, elapsed, reduceMotion);
+
+    // Ease the parallax offset toward the cursor so it glides, never snaps.
+    pointer.x += (pointerTarget.x - pointer.x) * 0.05;
+    pointer.y += (pointerTarget.y - pointer.y) * 0.05;
+
+    frameCamera(camera, canvas, elapsed, reduceMotion, pointer);
+    applyDayNight(env, scene, elapsed, reduceMotion);
 
     if (!reduceMotion) {
       waterMaterial.uniforms.uTime.value = elapsed;
