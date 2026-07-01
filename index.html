@@ -36,8 +36,11 @@
       (function () {
         try {
           var t = localStorage.getItem("nfoifsb.theme");
+          var p = localStorage.getItem("nfoifsb.themePreset");
           if (t === "dark" || t === "light")
             document.documentElement.setAttribute("data-theme", t);
+          if (["forest", "cave", "amethyst", "ember", "ocean"].includes(p))
+            document.documentElement.setAttribute("data-theme-preset", p);
         } catch (e) {}
       })();
     </script>
