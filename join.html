@@ -1,0 +1,107 @@
+<!doctype html>
+<html lang="ko">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta
+      name="description"
+      content="How to join the nfoifsb.kr Minecraft Java server."
+    />
+    <meta name="theme-color" content="#f5f5f7" media="(prefers-color-scheme: light)" />
+    <meta name="theme-color" content="#0d1411" media="(prefers-color-scheme: dark)" />
+    <link rel="icon" type="image/png" href="/assets/server-icon.png" />
+    <title>Join - nfoifsb.kr</title>
+    <script>
+      (function () {
+        try {
+          var t = localStorage.getItem("nfoifsb.theme");
+          if (t === "dark" || t === "light")
+            document.documentElement.setAttribute("data-theme", t);
+        } catch (e) {}
+      })();
+    </script>
+  </head>
+  <body>
+    <div id="app">
+      <a class="skip-link" href="#content">본문으로 건너뛰기</a>
+      <header class="site-nav" aria-label="Primary navigation">
+        <a class="brand" href="/" aria-label="nfoifsb home">
+          <img src="/assets/server-icon.png" alt="" />
+          <span>nfoifsb</span>
+        </a>
+        <button class="theme-toggle" type="button" aria-label="테마 전환" data-theme-toggle>
+          <svg class="ic" data-theme-icon="dark" viewBox="0 0 24 24" aria-hidden="true">
+            <circle cx="12" cy="12" r="4.2" />
+            <path d="M12 2v3M12 19v3M2 12h3M19 12h3M4.5 4.5l2 2M17.5 17.5l2 2M19.5 4.5l-2 2M6.5 17.5l-2 2" />
+          </svg>
+          <svg class="ic" data-theme-icon="light" viewBox="0 0 24 24" aria-hidden="true" hidden>
+            <path d="M21 12.8A8 8 0 1 1 11.2 3a6 6 0 0 0 9.8 9.8z" />
+          </svg>
+        </button>
+        <button
+          class="nav-toggle"
+          type="button"
+          aria-expanded="false"
+          aria-controls="primary-nav"
+          aria-label="메뉴 열기"
+          data-nav-toggle
+        >
+          <span aria-hidden="true">☰</span>
+        </button>
+        <nav class="nav-links" id="primary-nav" aria-label="Site pages">
+          <a href="/status.html" data-section-link="status">Status</a>
+          <a href="/plugins.html" data-section-link="plugins">Plugins</a>
+          <a href="/rules.html" data-section-link="rules">Rules</a>
+          <a href="/join.html" data-section-link="join">Join</a>
+          <a class="nav-login" href="/login.html" data-open-login>Login</a>
+        </nav>
+      </header>
+
+      <main id="content" class="screen-main">
+        <section class="join-section page-screen" aria-labelledby="join-title">
+          <div class="join-layout" data-reveal>
+            <div class="join-card">
+              <img src="/assets/server-icon.png" alt="" />
+              <p class="eyebrow">Join</p>
+              <h1 id="join-title">접속 화면</h1>
+              <div class="address-row">
+                <code>nfoifsb.kr</code>
+                <button type="button" data-copy-address>복사</button>
+              </div>
+              <p class="join-note" data-copy-feedback>
+                Minecraft Java 멀티플레이 서버 주소에 그대로 넣으면 됩니다.
+              </p>
+            </div>
+            <div class="join-steps">
+              <article>
+                <span>1</span>
+                <strong>Minecraft Java 실행</strong>
+                <p>멀티플레이 메뉴에서 서버 추가 화면으로 이동합니다.</p>
+              </article>
+              <article>
+                <span>2</span>
+                <strong>주소 입력</strong>
+                <p><code>nfoifsb.kr</code>을 서버 주소에 입력하고 저장합니다.</p>
+              </article>
+              <article>
+                <span>3</span>
+                <strong>상태 확인 후 접속</strong>
+                <p>Status 화면에서 온라인 여부와 현재 접속자 수를 확인한 뒤 접속합니다.</p>
+              </article>
+            </div>
+          </div>
+        </section>
+      </main>
+
+      <footer class="site-footer">
+        <span class="footer-brand">
+          <img src="/assets/server-icon.png" alt="" />
+          nfoifsb.kr
+        </span>
+        <span>Paper 26.1.2 · Minecraft 생존 서버</span>
+        <a href="#content">맨 위로</a>
+      </footer>
+    </div>
+    <script type="module" src="/src/main.js"></script>
+  </body>
+</html>

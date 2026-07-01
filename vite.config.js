@@ -10,6 +10,10 @@ export default defineConfig({
       input: {
         main: resolve(rootDir, "index.html"),
         login: resolve(rootDir, "login.html"),
+        status: resolve(rootDir, "status.html"),
+        plugins: resolve(rootDir, "plugins.html"),
+        rules: resolve(rootDir, "rules.html"),
+        join: resolve(rootDir, "join.html"),
       },
     },
   },
