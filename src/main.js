@@ -69,6 +69,7 @@ const STOCKS = [
   { code: "LOG", name: "건축 목재", base: 890, volume: 9340, drift: -0.012 },
   { code: "RED", name: "레드스톤 공업", base: 2160, volume: 7990, drift: 0.033 },
 ];
+const FINANCIAL_PERIODS = ["FY2026E", "FY2025", "FY2024", "FY2023"];
 const PAGE_LINKS = new Map([
   ["/status.html", "status"],
   ["/plugins.html", "plugins"],
@@ -886,6 +887,25 @@ function formatStockChange(value) {
   return `${sign}${number.toFixed(1)}%`;
 }
 
+function clampStockValue(value, min, max) {
+  const number = Number(value);
+  if (!Number.isFinite(number)) return min;
+  return Math.min(max, Math.max(min, number));
+}
+
+function formatStockPercent(value, digits = 1, signed = false) {
+  const number = Number(value);
+  if (!Number.isFinite(number)) return "--";
+  const sign = signed && number >= 0 ? "+" : "";
+  return `${sign}${number.toFixed(digits)}%`;
+}
+
+function formatStockMultiple(value) {
+  const number = Number(value);
+  if (!Number.isFinite(number) || number <= 0) return "--";
+  return `${number.toFixed(1)}x`;
+}
+
 function formatStockKrwCompact(value) {
   const number = Number(value);
   if (!Number.isFinite(number)) return "--";
@@ -1198,6 +1218,336 @@ function stockTechnicalMetrics(stock, tick, range) {
   const volatility = stockVolatility(closes);
   const vwapGap = vwap ? ((last - vwap) / vwap) * 100 : 0;
   return { rsi, macd, signal, volatility, vwapGap, price: last };
+}
+
+function stockFinancialSeed(code) {
+  return (
+    String(code || "")
+      .split("")
+      .reduce((sum, character, index) => sum + character.charCodeAt(0) * (index + 3), 0) % 97
+  ) / 96;
+}
+
+function periodRatio(numerator, denominator) {
+  const top = Number(numerator);
+  const bottom = Number(denominator);
+  if (!Number.isFinite(top) || !Number.isFinite(bottom) || bottom === 0) return null;
+  return top / bottom;
+}
+
+function buildStockFinancials(stock, metrics = {}) {
+  const code = stockCode(stock);
+  const seed = stockFinancialSeed(code);
+  const price = Math.max(1, Number(stock?.price || stock?.base) || 1);
+  const rawShares = Number(stock?.sharesOutstanding ?? stock?.shares ?? stock?.volume);
+  const marketCapInput = Number(stock?.marketCap);
+  const fallbackShares = Number.isFinite(rawShares) && rawShares > 0 ? rawShares : Math.max(1000, Math.round(Number(stock?.volume24h || 0) / 3));
+  const marketCap = Number.isFinite(marketCapInput) && marketCapInput > 0 ? marketCapInput : price * fallbackShares;
+  const shares = Math.max(1, Number.isFinite(rawShares) && rawShares > 0 ? rawShares : marketCap / price);
+  const rawDrift = Number(stock?.drift || 0);
+  const change = Number.isFinite(Number(stock?.change24h))
+    ? Number(stock.change24h)
+    : Math.abs(rawDrift) < 1
+      ? rawDrift * 100
+      : rawDrift;
+  const volatility = Number(metrics?.volatility || 0);
+  const revenueGrowth = clampStockValue(0.045 + change / 150 + seed * 0.012 - volatility / 900, -0.055, 0.22);
+  const baseRevenue = Math.max(
+    marketCap * (0.68 + seed * 0.28) + price * Math.max(1, Number(stock?.volume24h || stock?.volume || 1)) * 0.012,
+    marketCap * 0.52,
+  );
+  const grossMargin = clampStockValue(0.34 + seed * 0.16 + revenueGrowth * 0.32 - volatility / 500, 0.24, 0.68);
+  const operatingMargin = clampStockValue(grossMargin - (0.15 + seed * 0.055), 0.055, 0.38);
+  const netMargin = clampStockValue(operatingMargin - 0.036 - seed * 0.016, 0.024, 0.29);
+  const assetTurnover = clampStockValue(1.18 + seed * 0.34 + revenueGrowth, 0.8, 1.85);
+  const liabilityRatio = clampStockValue(0.34 + seed * 0.18 - netMargin * 0.18 + volatility / 260, 0.2, 0.62);
+
+  const periods = FINANCIAL_PERIODS.map((label, index) => {
+    const factor = (1 + revenueGrowth) ** -index;
+    const revenue = baseRevenue * factor;
+    const marginStep = index * 0.006;
+    const periodGrossMargin = clampStockValue(grossMargin - marginStep * 0.55, 0.2, 0.7);
+    const periodOperatingMargin = clampStockValue(operatingMargin - marginStep, 0.035, 0.42);
+    const periodNetMargin = clampStockValue(netMargin - marginStep * 0.8, 0.012, 0.32);
+    const grossProfit = revenue * periodGrossMargin;
+    const operatingIncome = revenue * periodOperatingMargin;
+    const depreciation = revenue * (0.035 + seed * 0.025);
+    const ebitda = operatingIncome + depreciation;
+    const netIncome = revenue * periodNetMargin;
+    const cash = revenue * (0.14 + seed * 0.05) + Math.max(0, netIncome) * 0.12;
+    const receivables = revenue * (0.105 + seed * 0.025);
+    const inventory = revenue * (0.07 + seed * 0.035);
+    const currentAssets = cash + receivables + inventory;
+    const fixedAssets = revenue / assetTurnover;
+    const totalAssets = currentAssets + fixedAssets;
+    const totalLiabilities = totalAssets * liabilityRatio;
+    const debt = totalLiabilities * (0.44 + seed * 0.18);
+    const currentLiabilities = totalLiabilities * (0.38 + seed * 0.08);
+    const equity = totalAssets - totalLiabilities;
+    const workingCapitalDrag = revenue * clampStockValue(0.012 + Math.max(revenueGrowth, 0) * 0.05, 0.004, 0.035);
+    const operatingCashFlow = netIncome + depreciation - workingCapitalDrag;
+    const capex = -revenue * (0.048 + Math.max(revenueGrowth, 0) * 0.16 + seed * 0.016);
+    const freeCashFlow = operatingCashFlow + capex;
+    const financingCashFlow = -Math.max(0, debt * 0.035 - freeCashFlow * 0.04);
+    const enterpriseValue = marketCap + debt - cash;
+    const investedCapital = Math.max(1, debt + equity - cash);
+
+    return {
+      label,
+      revenue,
+      revenueGrowth: index === FINANCIAL_PERIODS.length - 1 ? null : revenueGrowth * 100,
+      grossProfit,
+      grossMargin: periodGrossMargin * 100,
+      operatingIncome,
+      operatingMargin: periodOperatingMargin * 100,
+      depreciation,
+      ebitda,
+      netIncome,
+      netMargin: periodNetMargin * 100,
+      cash,
+      receivables,
+      inventory,
+      currentAssets,
+      fixedAssets,
+      totalAssets,
+      debt,
+      currentLiabilities,
+      totalLiabilities,
+      equity,
+      operatingCashFlow,
+      capex,
+      freeCashFlow,
+      financingCashFlow,
+      eps: netIncome / shares,
+      bps: equity / shares,
+      marketCap,
+      enterpriseValue,
+      per: periodRatio(marketCap, netIncome),
+      pbr: periodRatio(marketCap, equity),
+      psr: periodRatio(marketCap, revenue),
+      evEbitda: periodRatio(enterpriseValue, ebitda),
+      fcfYield: periodRatio(freeCashFlow, marketCap) * 100,
+      roe: periodRatio(netIncome, equity) * 100,
+      roa: periodRatio(netIncome, totalAssets) * 100,
+      roic: periodRatio(operatingIncome * 0.78, investedCapital) * 100,
+      debtRatio: periodRatio(totalLiabilities, equity) * 100,
+      currentRatio: periodRatio(currentAssets, currentLiabilities) * 100,
+      cashConversion: periodRatio(operatingCashFlow, netIncome) * 100,
+      fcfMargin: periodRatio(freeCashFlow, revenue) * 100,
+    };
+  });
+
+  const latest = periods[0];
+  const previous = periods[1] || latest;
+  latest.revenueGrowth = periodRatio(latest.revenue - previous.revenue, previous.revenue) * 100;
+  const growthScore = clampStockValue(55 + latest.revenueGrowth * 2.2, 20, 96);
+  const profitScore = clampStockValue(42 + latest.operatingMargin * 1.55 + latest.roe * 0.72, 20, 96);
+  const stabilityScore = clampStockValue(90 - latest.debtRatio * 0.34 + latest.currentRatio * 0.07, 20, 96);
+  const cashScore = clampStockValue(50 + latest.fcfMargin * 2.5 + latest.fcfYield * 2.2, 20, 96);
+  const valuationScore = clampStockValue(82 - (latest.per || 24) * 1.15 - (latest.pbr || 3) * 3.8 + latest.fcfYield * 2 + latest.roe * 0.36, 20, 96);
+  const qualityScore = Math.round(growthScore * 0.22 + profitScore * 0.26 + stabilityScore * 0.2 + cashScore * 0.2 + valuationScore * 0.12);
+  const qualityLabel = qualityScore >= 82 ? "A급 복합 우량" : qualityScore >= 70 ? "안정 성장" : qualityScore >= 58 ? "중립 관찰" : "리스크 점검";
+  const valuationLabel = latest.per && latest.per < 12 && latest.fcfYield > 4 ? "저평가 매력" : latest.per && latest.per > 24 ? "프리미엄 구간" : "적정 밸류";
+
+  return {
+    code,
+    name: stock?.name || code,
+    periods,
+    latest,
+    qualityScore,
+    qualityLabel,
+    valuationLabel,
+    health: {
+      growth: growthScore,
+      profitability: profitScore,
+      stability: stabilityScore,
+      cash: cashScore,
+    },
+    summary: `${stock?.name || code}는 ${formatStockPercent(latest.revenueGrowth, 1, true)} 매출 성장과 ${formatStockPercent(latest.operatingMargin)} 영업이익률을 기록하는 ${qualityLabel} 종목입니다. ${valuationLabel}이며, FCF Yield ${formatStockPercent(latest.fcfYield)}와 부채비율 ${formatStockPercent(latest.debtRatio)}를 함께 봐야 합니다.`,
+  };
+}
+
+function financialStatementRows(financials, view) {
+  const periods = financials.periods;
+  const row = (label, key, format = "krw") => ({ label, format, values: periods.map((period) => period[key]) });
+  if (view === "balance") {
+    return [
+      row("현금성자산", "cash"),
+      row("매출채권", "receivables"),
+      row("재고자산", "inventory"),
+      row("유동자산", "currentAssets"),
+      row("비유동자산", "fixedAssets"),
+      row("총자산", "totalAssets"),
+      row("차입금", "debt"),
+      row("총부채", "totalLiabilities"),
+      row("자본총계", "equity"),
+      row("BPS", "bps", "krw-full"),
+      row("부채비율", "debtRatio", "percent"),
+      row("유동비율", "currentRatio", "percent"),
+    ];
+  }
+  if (view === "cashflow") {
+    return [
+      row("영업활동현금흐름", "operatingCashFlow"),
+      row("CAPEX", "capex"),
+      row("잉여현금흐름", "freeCashFlow"),
+      row("재무활동현금흐름", "financingCashFlow"),
+      row("감가상각", "depreciation"),
+      row("FCF 마진", "fcfMargin", "percent"),
+      row("현금전환율", "cashConversion", "percent"),
+      row("FCF Yield", "fcfYield", "percent"),
+    ];
+  }
+  if (view === "valuation") {
+    return [
+      row("시가총액", "marketCap"),
+      row("기업가치(EV)", "enterpriseValue"),
+      row("PER", "per", "multiple"),
+      row("PBR", "pbr", "multiple"),
+      row("PSR", "psr", "multiple"),
+      row("EV/EBITDA", "evEbitda", "multiple"),
+      row("ROE", "roe", "percent"),
+      row("ROA", "roa", "percent"),
+      row("ROIC", "roic", "percent"),
+      row("FCF Yield", "fcfYield", "percent"),
+    ];
+  }
+  return [
+    row("매출액", "revenue"),
+    row("매출 성장률", "revenueGrowth", "percent-signed"),
+    row("매출총이익", "grossProfit"),
+    row("매출총이익률", "grossMargin", "percent"),
+    row("영업이익", "operatingIncome"),
+    row("영업이익률", "operatingMargin", "percent"),
+    row("EBITDA", "ebitda"),
+    row("순이익", "netIncome"),
+    row("순이익률", "netMargin", "percent"),
+    row("EPS", "eps", "krw-full"),
+  ];
+}
+
+function formatFinancialCell(value, format) {
+  if (value === null || value === undefined || !Number.isFinite(Number(value))) return "--";
+  if (format === "percent") return formatStockPercent(value);
+  if (format === "percent-signed") return formatStockPercent(value, 1, true);
+  if (format === "multiple") return formatStockMultiple(value);
+  if (format === "krw-full") return formatStockKrw(value);
+  return formatStockKrwCompact(value);
+}
+
+function renderStockFinancials(elements, stock, metrics, view = "income") {
+  if (!elements?.table || !stock) return;
+  const financials = buildStockFinancials(stock, metrics);
+  const latest = financials.latest;
+  const rows = financialStatementRows(financials, view);
+
+  if (elements.period) elements.period.textContent = `${FINANCIAL_PERIODS[0]} · KRW`;
+  if (elements.code) elements.code.textContent = financials.code;
+  if (elements.company) elements.company.textContent = financials.name;
+  if (elements.summary) elements.summary.textContent = financials.summary;
+  if (elements.score) {
+    elements.score.style.setProperty("--score", `${financials.qualityScore}%`);
+    elements.score.replaceChildren();
+    const label = document.createElement("span");
+    label.textContent = "Quality Score";
+    const value = document.createElement("strong");
+    value.textContent = String(financials.qualityScore);
+    const tone = document.createElement("em");
+    tone.textContent = financials.qualityLabel;
+    elements.score.append(label, value, tone);
+  }
+  if (elements.kpis) {
+    const kpis = [
+      ["매출", formatStockKrwCompact(latest.revenue), `YoY ${formatStockPercent(latest.revenueGrowth, 1, true)}`, latest.revenueGrowth],
+      ["영업이익률", formatStockPercent(latest.operatingMargin), `순이익률 ${formatStockPercent(latest.netMargin)}`, latest.operatingMargin - 12],
+      ["FCF", formatStockKrwCompact(latest.freeCashFlow), `FCF 마진 ${formatStockPercent(latest.fcfMargin)}`, latest.freeCashFlow],
+      ["PER / PBR", `${formatStockMultiple(latest.per)} / ${formatStockMultiple(latest.pbr)}`, financials.valuationLabel, latest.fcfYield],
+      ["ROE", formatStockPercent(latest.roe), `ROIC ${formatStockPercent(latest.roic)}`, latest.roe - 10],
+    ];
+    elements.kpis.replaceChildren(
+      ...kpis.map(([label, value, caption, tone]) => {
+        const item = document.createElement("span");
+        const name = document.createElement("em");
+        name.textContent = label;
+        const metric = document.createElement("strong");
+        metric.textContent = value;
+        const detail = document.createElement("small");
+        detail.textContent = caption;
+        detail.classList.toggle("is-down", Number(tone) < 0);
+        item.append(name, metric, detail);
+        return item;
+      }),
+    );
+  }
+  if (elements.head) {
+    const metricHead = document.createElement("th");
+    metricHead.scope = "col";
+    metricHead.textContent = "항목";
+    const periodHeads = financials.periods.map((period) => {
+      const th = document.createElement("th");
+      th.scope = "col";
+      th.textContent = period.label;
+      return th;
+    });
+    elements.head.replaceChildren(metricHead, ...periodHeads);
+  }
+  elements.table.replaceChildren(
+    ...rows.map((rowData) => {
+      const row = document.createElement("tr");
+      const label = document.createElement("th");
+      label.scope = "row";
+      label.textContent = rowData.label;
+      row.append(label);
+      rowData.values.forEach((value) => {
+        const cell = document.createElement("td");
+        cell.textContent = formatFinancialCell(value, rowData.format);
+        if (rowData.format.includes("percent") || rowData.format === "krw") {
+          cell.classList.toggle("is-down", Number(value) < 0);
+          cell.classList.toggle("is-up", Number(value) >= 0);
+        }
+        row.append(cell);
+      });
+      return row;
+    }),
+  );
+  if (elements.diagnosis) {
+    elements.diagnosis.textContent = `전문가 메모: ${financials.qualityLabel}. 성장성 ${Math.round(financials.health.growth)}점, 수익성 ${Math.round(financials.health.profitability)}점, 안정성 ${Math.round(financials.health.stability)}점입니다. 거래 전에는 오더북 압력과 FCF 변화를 함께 확인하세요.`;
+  }
+  if (elements.ratios) {
+    const ratioRows = [
+      ["부채비율", formatStockPercent(latest.debtRatio)],
+      ["유동비율", formatStockPercent(latest.currentRatio)],
+      ["FCF Yield", formatStockPercent(latest.fcfYield)],
+      ["EV/EBITDA", formatStockMultiple(latest.evEbitda)],
+    ];
+    elements.ratios.replaceChildren(
+      ...ratioRows.map(([label, value]) => {
+        const item = document.createElement("span");
+        item.innerHTML = `<em>${label}</em><strong>${value}</strong>`;
+        return item;
+      }),
+    );
+  }
+  if (elements.health) {
+    const healthRows = [
+      ["성장성", financials.health.growth],
+      ["수익성", financials.health.profitability],
+      ["안정성", financials.health.stability],
+      ["현금흐름", financials.health.cash],
+    ];
+    elements.health.replaceChildren(
+      ...healthRows.map(([label, value]) => {
+        const item = document.createElement("span");
+        item.style.setProperty("--value", `${Math.round(value)}%`);
+        const name = document.createElement("em");
+        name.textContent = label;
+        const score = document.createElement("strong");
+        score.textContent = `${Math.round(value)}점`;
+        item.append(name, score);
+        return item;
+      }),
+    );
+  }
 }
 
 function renderStockChart(svg, stock, tick, selectedRange = "24H", options = {}) {
@@ -1822,6 +2172,7 @@ function initStockExchange() {
   const modeButtons = document.querySelectorAll("[data-stock-chart-mode]");
   const scaleButtons = document.querySelectorAll("[data-stock-scale]");
   const indicatorButtons = document.querySelectorAll("[data-stock-indicator]");
+  const financialViewButtons = document.querySelectorAll("[data-stock-financial-view]");
   const axisStart = document.querySelector("[data-stock-axis-start]");
   const tape = document.querySelector("[data-trade-tape]");
   const orderBook = document.querySelector("[data-stock-order-book]");
@@ -1848,6 +2199,19 @@ function initStockExchange() {
     signal: document.querySelector("[data-stock-expert-signal]"),
     metrics: document.querySelector("[data-stock-expert-metrics]"),
     risk: document.querySelector("[data-stock-risk-panel]"),
+  };
+  const financialElements = {
+    period: document.querySelector("[data-stock-financial-period]"),
+    code: document.querySelector("[data-stock-financial-code]"),
+    company: document.querySelector("[data-stock-financial-company]"),
+    summary: document.querySelector("[data-stock-financial-summary]"),
+    score: document.querySelector("[data-stock-financial-score]"),
+    kpis: document.querySelector("[data-stock-financial-kpis]"),
+    head: document.querySelector("[data-stock-financial-head]"),
+    table: document.querySelector("[data-stock-financial-table]"),
+    diagnosis: document.querySelector("[data-stock-financial-diagnosis]"),
+    ratios: document.querySelector("[data-stock-financial-ratios]"),
+    health: document.querySelector("[data-stock-financial-health]"),
   };
   const portfolioList = document.querySelector("[data-stock-portfolio]");
   const portfolioBalance = document.querySelector("[data-stock-portfolio-balance]");
@@ -1876,6 +2240,7 @@ function initStockExchange() {
   let activeSort = "market";
   let activeMode = document.querySelector("[data-stock-chart-mode].is-active")?.dataset.stockChartMode || "line";
   let activeScale = document.querySelector("[data-stock-scale].is-active")?.dataset.stockScale || "price";
+  let activeFinancialView = document.querySelector("[data-stock-financial-view].is-active")?.dataset.stockFinancialView || "income";
   let activeDepthGroup = Number(document.querySelector("[data-stock-depth-group].is-active")?.dataset.stockDepthGroup || 1);
   let activeIndicators = new Set(
     Array.from(document.querySelectorAll("[data-stock-indicator].is-active")).map(
@@ -1949,6 +2314,9 @@ function initStockExchange() {
     indicatorButtons.forEach((button) => {
       button.classList.toggle("is-active", activeIndicators.has(button.dataset.stockIndicator));
     });
+    financialViewButtons.forEach((button) => {
+      button.classList.toggle("is-active", button.dataset.stockFinancialView === activeFinancialView);
+    });
     if (axisStart) axisStart.textContent = activeRange === "ALL" ? "전체" : `${activeRange} 전`;
     depthGroupButtons.forEach((button) => {
       button.classList.toggle("is-active", Number(button.dataset.stockDepthGroup || 1) === activeDepthGroup);
@@ -1972,6 +2340,7 @@ function initStockExchange() {
     });
     renderStockPortfolio(portfolioList, portfolioBalance, portfolio, market);
     renderExpertPanel(expertElements, metrics, depth, stock, orderElements, activeSide);
+    renderStockFinancials(financialElements, stock, metrics, activeFinancialView);
     renderOrderTicket(orderElements, stock, activeSide, playerProfile, portfolio, liveMarket, orderLoading, { metrics, depth });
   }
 
@@ -2060,6 +2429,12 @@ function initStockExchange() {
       if (!indicator) return;
       if (activeIndicators.has(indicator)) activeIndicators.delete(indicator);
       else activeIndicators.add(indicator);
+      render();
+    });
+  });
+  financialViewButtons.forEach((button) => {
+    button.addEventListener("click", () => {
+      activeFinancialView = button.dataset.stockFinancialView || "income";
       render();
     });
   });
