@@ -22,6 +22,7 @@ const PLAYER_API_BASE = PLAYER_API_BASES[0] || "";
 const SERVER_OVERVIEW_TIMEOUT_MS = 6000;
 const SERVER_OVERVIEW_INTERVAL_MS = 10000;
 const STOCK_MARKET_TIMEOUT_MS = 6000;
+const STOCK_TRADE_TIMEOUT_MS = 8000;
 
 const statusDot = document.querySelector("[data-status-dot]");
 const statusLabel = document.querySelector("[data-status-label]");
@@ -51,6 +52,7 @@ const playerChart = document.querySelector("[data-player-chart]");
 const sectionLinks = document.querySelectorAll("[data-section-link]");
 const AUTH_STORAGE_KEY = "nfoifsb.googleUser";
 const AUTH_EVENT_KEY = "nfoifsb.authEvent";
+const PLAYER_PROFILES_KEY = "nfoifsb.playerProfiles";
 const STATUS_CACHE_KEY = "nfoifsb.statusCache";
 const PLAYER_HISTORY_KEY = "nfoifsb.playerHistory";
 const PLAYER_HISTORY_MAX = 48;
@@ -549,6 +551,23 @@ function readStoredUser() {
   }
 }
 
+function readJsonStorage(key, fallback) {
+  try {
+    const raw = localStorage.getItem(key);
+    return raw ? JSON.parse(raw) : fallback;
+  } catch {
+    return fallback;
+  }
+}
+
+function getUserKey(user) {
+  return String(user?.sub || user?.email || user?.name || "local-player").toLowerCase();
+}
+
+function readPlayerProfile(user = sessionUser || readStoredUser()) {
+  return readJsonStorage(PLAYER_PROFILES_KEY, {})[getUserKey(user)] || null;
+}
+
 function renderAuthState(user = sessionUser || readStoredUser()) {
   if (!loginButton) return;
 
@@ -925,11 +944,11 @@ async function fetchStockMarket() {
   }
 }
 
-async function fetchPlayerApiJson(path, timeoutMs) {
+async function fetchPlayerApiJson(path, timeoutMs, options = {}) {
   let lastError = null;
   for (const base of PLAYER_API_BASES) {
     try {
-      return await fetchPlayerApiJsonFrom(base, path, timeoutMs);
+      return await fetchPlayerApiJsonFrom(base, path, timeoutMs, options);
     } catch (error) {
       lastError = error;
     }
@@ -937,13 +956,21 @@ async function fetchPlayerApiJson(path, timeoutMs) {
   throw lastError || new Error("player api unavailable");
 }
 
-async function fetchPlayerApiJsonFrom(base, path, timeoutMs) {
+async function fetchPlayerApiJsonFrom(base, path, timeoutMs, options = {}) {
   const controller = new AbortController();
   const timer = window.setTimeout(() => controller.abort(), timeoutMs);
+  const headers = { ...(options.headers || {}) };
+  if (options.body && !headers["Content-Type"]) headers["Content-Type"] = "application/json";
   try {
-    const response = await fetch(`${base}${path}`, { cache: "no-store", signal: controller.signal });
-    if (!response.ok) throw new Error(`player api ${response.status}`);
-    return await response.json();
+    const response = await fetch(`${base}${path}`, {
+      ...options,
+      cache: "no-store",
+      signal: controller.signal,
+      headers,
+    });
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(payload?.message || `player api ${response.status}`);
+    return payload;
   } finally {
     window.clearTimeout(timer);
   }
@@ -1226,18 +1253,86 @@ function initStockExchange() {
   const rangeButtons = document.querySelectorAll("[data-stock-range]");
   const sortButtons = document.querySelectorAll("[data-stock-sort]");
   const tape = document.querySelector("[data-trade-tape]");
+  const tradeJumpLinks = document.querySelectorAll("[data-stock-trade-jump]");
+  const orderPanel = document.querySelector("[data-stock-order-panel]");
+  const orderSymbol = document.querySelector("[data-stock-order-symbol]");
+  const orderPrice = document.querySelector("[data-stock-order-price]");
+  const orderPosition = document.querySelector("[data-stock-order-position]");
+  const orderBalance = document.querySelector("[data-stock-order-balance]");
+  const orderQuantity = document.querySelector("[data-stock-order-quantity]");
+  const orderButtons = document.querySelectorAll("[data-stock-order-side]");
+  const orderMessage = document.querySelector("[data-stock-order-message]");
   const reduceMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
   let market = buildFallbackMarket(0);
+  let portfolio = null;
   let activeCode = market.stocks[0]?.symbol || market.stocks[0]?.code || "DMD";
   let activeRange = "24H";
   let activeSort = "market";
   let liveMarket = false;
+  let orderLoading = false;
   let tick = 0;
 
   const selectStock = (code) => {
     activeCode = code;
     render();
   };
+
+  const selectedPosition = () => {
+    const positions = Array.isArray(portfolio?.positions) ? portfolio.positions : [];
+    return positions.find((position) => position.symbol === activeCode || position.code === activeCode) || null;
+  };
+
+  const setOrderMessage = (text, tone = "info") => {
+    if (!orderMessage) return;
+    orderMessage.textContent = text;
+    orderMessage.classList.toggle("is-error", tone === "error");
+    orderMessage.classList.toggle("is-success", tone === "success");
+  };
+
+  const currentPlayerProfile = () => readPlayerProfile(sessionUser || readStoredUser());
+
+  function renderStockOrder(stock) {
+    if (!orderPanel) return;
+
+    const playerProfile = currentPlayerProfile();
+    const position = selectedPosition();
+    const canTrade = Boolean(
+      playerProfile?.verified && playerProfile?.webToken && PLAYER_API_BASES.length && liveMarket && stock && !orderLoading,
+    );
+
+    orderPanel.classList.toggle("is-loading", orderLoading);
+    orderPanel.classList.toggle("can-trade", canTrade);
+    if (orderSymbol) orderSymbol.textContent = stock ? `${activeCode} · ${stock.name || activeCode}` : activeCode;
+    if (orderPrice) orderPrice.textContent = stock ? formatStockNumber(stock.price) : "--";
+    if (orderPosition) {
+      orderPosition.textContent = position
+        ? `${formatStockNumber(position.shares)}주 · ${formatStockNumber(position.value)}`
+        : "0주";
+    }
+    if (orderBalance) {
+      orderBalance.textContent = portfolio?.balance === undefined ? "--" : formatStockNumber(portfolio.balance);
+    }
+    if (orderQuantity) orderQuantity.disabled = !canTrade;
+    orderButtons.forEach((button) => {
+      button.disabled = !canTrade;
+    });
+
+    if (orderLoading) {
+      setOrderMessage("주문 정보를 확인하는 중입니다.");
+    } else if (!sessionUser && !readStoredUser()) {
+      setOrderMessage("로그인 후 캐릭터 인증을 완료하면 이 화면에서 바로 거래할 수 있습니다.");
+    } else if (!playerProfile?.verified) {
+      setOrderMessage("내 캐릭터에서 마크 닉네임 인증을 먼저 완료해 주세요.", "error");
+    } else if (!playerProfile.webToken) {
+      setOrderMessage("인증 확인을 다시 눌러 웹 거래 토큰을 받아오세요.", "error");
+    } else if (!PLAYER_API_BASES.length) {
+      setOrderMessage("주식 거래 API가 아직 연결되지 않았습니다.", "error");
+    } else if (!liveMarket) {
+      setOrderMessage("실시간 주식 API를 불러오는 중입니다. 잠시 후 다시 시도해 주세요.");
+    } else {
+      setOrderMessage("선택한 종목을 그래프와 함께 보면서 매수/매도할 수 있습니다.", "success");
+    }
+  }
 
   function render() {
     const rawStocks = Array.isArray(market?.stocks) && market.stocks.length ? market.stocks : buildFallbackMarket(tick).stocks;
@@ -1280,6 +1375,7 @@ function initStockExchange() {
     renderStockTicker(ticker, stocks, activeCode, selectStock);
     renderStockRows(list, stocks, activeCode, selectStock);
     renderStockTape(tape, market?.recentTrades);
+    renderStockOrder(stock);
   }
 
   async function refreshMarket() {
@@ -1294,7 +1390,119 @@ function initStockExchange() {
     render();
   }
 
+  async function refreshPortfolio() {
+    const user = sessionUser || readStoredUser();
+    const playerProfile = readPlayerProfile(user);
+    if (!playerProfile?.verified || !playerProfile?.webToken || !PLAYER_API_BASES.length) {
+      portfolio = null;
+      render();
+      return;
+    }
+
+    let errorMessage = "";
+    try {
+      const payload = await fetchPlayerApiJson("/stocks/portfolio", STOCK_TRADE_TIMEOUT_MS, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${playerProfile.webToken}`,
+        },
+        body: JSON.stringify({
+          nickname: playerProfile.nickname,
+          webToken: playerProfile.webToken,
+        }),
+      });
+      if (payload?.ok) portfolio = payload;
+    } catch (error) {
+      errorMessage = error?.message || "포트폴리오를 불러오지 못했습니다.";
+    } finally {
+      render();
+      if (errorMessage) setOrderMessage(errorMessage, "error");
+    }
+  }
+
+  async function refreshTradingState() {
+    await refreshMarket();
+    await refreshPortfolio();
+  }
+
+  function mergeTradePosition(payload) {
+    if (!payload?.position) return;
+    const positions = Array.isArray(portfolio?.positions) ? [...portfolio.positions] : [];
+    const next = payload.position;
+    const index = positions.findIndex((position) => position.symbol === next.symbol || position.code === next.symbol);
+    if (index >= 0) positions[index] = next;
+    else positions.push(next);
+    portfolio = {
+      ...(portfolio || {}),
+      balance: payload.balance,
+      positions,
+      updatedAt: new Date().toISOString(),
+    };
+  }
+
+  async function postStockOrder(side) {
+    const user = sessionUser || readStoredUser();
+    const playerProfile = readPlayerProfile(user);
+    if (!playerProfile?.verified || !playerProfile?.webToken) {
+      setOrderMessage("먼저 로그인하고 캐릭터 인증을 완료해 주세요.", "error");
+      return;
+    }
+    if (!PLAYER_API_BASES.length) {
+      setOrderMessage("주식 거래 API가 아직 연결되지 않았습니다.", "error");
+      return;
+    }
+
+    const quantity = Math.floor(Number(orderQuantity?.value || 0));
+    if (!Number.isFinite(quantity) || quantity <= 0) {
+      setOrderMessage("수량은 1주 이상으로 입력해 주세요.", "error");
+      return;
+    }
+
+    const sideLabel = side === "buy" ? "매수" : "매도";
+    orderLoading = true;
+    render();
+    setOrderMessage(`${activeCode} ${sideLabel} 주문 전송 중입니다.`);
+
+    try {
+      const payload = await fetchPlayerApiJson("/stocks/trade", STOCK_TRADE_TIMEOUT_MS, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${playerProfile.webToken}`,
+        },
+        body: JSON.stringify({
+          nickname: playerProfile.nickname,
+          webToken: playerProfile.webToken,
+          symbol: activeCode,
+          side,
+          quantity,
+        }),
+      });
+      if (payload?.market?.ok) {
+        market = payload.market;
+        liveMarket = true;
+      }
+      mergeTradePosition(payload);
+      render();
+      await refreshPortfolio();
+      orderLoading = false;
+      render();
+      setOrderMessage(`${activeCode} ${sideLabel} ${formatStockNumber(quantity)}주 체결 완료`, "success");
+    } catch (error) {
+      orderLoading = false;
+      render();
+      setOrderMessage(error?.message || "주문을 처리하지 못했습니다.", "error");
+    }
+  }
+
   render();
+  tradeJumpLinks.forEach((link) => {
+    link.addEventListener("click", (event) => {
+      if (!orderPanel) return;
+      event.preventDefault();
+      orderPanel.scrollIntoView({ behavior: reduceMotion ? "auto" : "smooth", block: "center" });
+      orderPanel.focus({ preventScroll: true });
+    });
+  });
   rangeButtons.forEach((button) => {
     button.addEventListener("click", () => {
       activeRange = button.dataset.stockRange || "24H";
@@ -1307,7 +1515,18 @@ function initStockExchange() {
       render();
     });
   });
-  startVisiblePoll(refreshMarket, 20000);
+  orderButtons.forEach((button) => {
+    button.addEventListener("click", () => {
+      const side = button.dataset.stockOrderSide;
+      if (side === "buy" || side === "sell") postStockOrder(side);
+    });
+  });
+  window.addEventListener("storage", (event) => {
+    if (event.key === AUTH_STORAGE_KEY || event.key === AUTH_EVENT_KEY || event.key === PLAYER_PROFILES_KEY) {
+      refreshPortfolio();
+    }
+  });
+  startVisiblePoll(refreshTradingState, 20000);
   if (!reduceMotion) {
     startVisiblePoll(
       () => {

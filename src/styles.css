@@ -2553,9 +2553,10 @@ input:focus-visible,
 
 .stock-order-panel {
   display: grid;
-  align-content: center;
+  align-content: start;
   gap: 10px;
   padding: 14px;
+  scroll-margin-top: 92px;
 }
 
 .stock-order-panel strong {
@@ -2564,6 +2565,127 @@ input:focus-visible,
 
 .stock-order-panel .stock-trade-link {
   width: 100%;
+}
+
+.stock-order-head {
+  display: flex;
+  align-items: start;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.stock-order-head strong {
+  max-width: 62%;
+  text-align: right;
+}
+
+.stock-order-meta {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 7px;
+}
+
+.stock-order-meta span {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  min-width: 0;
+  padding: 9px 10px;
+  border: 1px solid rgba(52, 74, 66, 0.1);
+  border-radius: 6px;
+  background: #fbfcfb;
+  color: var(--text-faint);
+  font-size: 12px;
+  font-weight: 850;
+}
+
+.stock-order-meta strong {
+  overflow: hidden;
+  color: var(--text);
+  font-size: 14px;
+  text-align: right;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.stock-order-field {
+  display: grid;
+  gap: 6px;
+}
+
+.stock-order-field input {
+  width: 100%;
+  min-height: 42px;
+  padding: 0 12px;
+  border: 1px solid rgba(52, 74, 66, 0.14);
+  border-radius: 6px;
+  color: var(--text);
+  background: #ffffff;
+  font: inherit;
+  font-weight: 900;
+}
+
+.stock-order-field input:disabled {
+  cursor: not-allowed;
+  opacity: 0.58;
+}
+
+.stock-order-actions {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.stock-order-actions button {
+  min-height: 42px;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  color: #ffffff;
+  font: inherit;
+  font-size: 14px;
+  font-weight: 950;
+  cursor: pointer;
+}
+
+.stock-order-actions button[data-stock-order-side="buy"] {
+  background: #147445;
+}
+
+.stock-order-actions button[data-stock-order-side="sell"] {
+  background: #b72d3a;
+}
+
+.stock-order-actions button:disabled {
+  cursor: not-allowed;
+  filter: grayscale(0.35);
+  opacity: 0.46;
+}
+
+.stock-order-actions button:not(:disabled):hover {
+  filter: brightness(1.08);
+  transform: translateY(-1px);
+}
+
+.stock-order-message {
+  min-height: 36px;
+  margin: 0;
+  color: var(--text-faint);
+  font-size: 12px;
+  font-weight: 800;
+  line-height: 1.45;
+}
+
+.stock-order-message.is-error {
+  color: #b72d3a;
+}
+
+.stock-order-message.is-success {
+  color: #117642;
+}
+
+.stock-order-login-link {
+  margin-top: 2px;
 }
 
 .stock-exchange {
@@ -2590,6 +2712,7 @@ input:focus-visible,
 .stock-exchange .stock-chart-top small,
 .stock-exchange .stock-quote-grid span,
 .stock-exchange .stock-order-panel span,
+.stock-exchange .stock-order-message,
 .stock-exchange .trade-tape span,
 .stock-exchange .stock-axis,
 .stock-exchange .stock-market-table thead th,
@@ -2603,6 +2726,7 @@ input:focus-visible,
 .stock-exchange .stock-heading strong,
 .stock-exchange .stock-chart-top strong,
 .stock-exchange .stock-quote-grid strong,
+.stock-exchange .stock-order-meta strong,
 .stock-exchange .stock-market-table,
 .stock-exchange .stock-market-table strong,
 .stock-exchange .trade-tape strong,
@@ -2616,6 +2740,8 @@ input:focus-visible,
 .stock-exchange .stock-ticker,
 .stock-exchange .stock-ticker button,
 .stock-exchange .stock-quote-grid span,
+.stock-exchange .stock-order-meta span,
+.stock-exchange .stock-order-field input,
 .stock-exchange .stock-range-tabs button,
 .stock-exchange .stock-tabs button,
 .stock-exchange .trade-tape li,
@@ -2650,8 +2776,13 @@ input:focus-visible,
 .stock-exchange .stock-heading em.is-down,
 .stock-exchange .stock-chart-top em.is-down,
 .stock-exchange .stock-market-table .is-down,
-.stock-exchange .trade-tape li.is-sell strong {
+.stock-exchange .trade-tape li.is-sell strong,
+.stock-exchange .stock-order-message.is-error {
   color: var(--stock-red);
+}
+
+.stock-exchange .stock-order-message.is-success {
+  color: var(--stock-green);
 }
 
 .stock-exchange .stock-trade-link {
@@ -2882,6 +3013,16 @@ input:focus-visible,
   .stock-trade-link,
   .economy-stock-teaser .stock-trade-link {
     width: 100%;
+  }
+
+  .stock-order-head {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .stock-order-head strong {
+    max-width: none;
+    text-align: left;
   }
 
   .stock-heading,

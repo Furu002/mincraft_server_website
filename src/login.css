@@ -750,6 +750,39 @@ a {
   transform: translateY(-2px);
 }
 
+.stock-trader-cta {
+  display: grid;
+  gap: 8px;
+}
+
+.stock-trader-link {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 44px;
+  padding: 0 14px;
+  border: 1px solid rgba(126, 231, 180, 0.42);
+  border-radius: 8px;
+  color: #07110d;
+  background: linear-gradient(135deg, var(--accent), var(--accent-2));
+  font-size: 14px;
+  font-weight: 900;
+  text-decoration: none;
+  box-shadow: 0 16px 32px rgba(126, 231, 180, 0.15);
+}
+
+.stock-trader-link:hover {
+  filter: brightness(1.06);
+  transform: translateY(-1px);
+}
+
+.stock-trader-cta span {
+  color: var(--text-faint);
+  font-size: 12px;
+  font-weight: 750;
+  line-height: 1.45;
+}
+
 .stock-trader-message {
   min-height: 20px;
   margin: 0;
@@ -979,6 +1012,7 @@ select:focus-visible {
 .auth-primary,
 .auth-ghost,
 .web-action-button,
+.stock-trader-link,
 .stock-trader-actions button,
 .auto-login-button,
 .auth-secondary-actions button {
@@ -992,6 +1026,7 @@ select:focus-visible {
 .auth-primary:hover,
 .auth-ghost:hover,
 .web-action-button:not(:disabled):hover,
+.stock-trader-link:hover,
 .stock-trader-actions button:not(:disabled):hover,
 .auth-secondary-actions button:hover {
   transform: translateY(-2px);

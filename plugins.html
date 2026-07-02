@@ -87,7 +87,7 @@
                   </div>
                   <div class="stock-terminal-actions">
                     <span class="stock-session" data-stock-session>24H LIVE</span>
-                    <a class="stock-trade-link" href="/login.html">거래하기</a>
+                    <a class="stock-trade-link" href="#stock-order-panel" data-stock-trade-jump>거래하기</a>
                   </div>
                 </div>
 
@@ -228,10 +228,42 @@
                       <li><span>실제 체결 대기</span><strong>--</strong></li>
                     </ul>
                   </section>
-                  <section class="stock-panel stock-order-panel" aria-label="웹 거래">
-                    <span>웹 거래</span>
-                    <strong>로그인하면 서버 머니로 바로 매수/매도</strong>
-                    <a class="stock-trade-link" href="/login.html">내 포트폴리오 열기</a>
+                  <section
+                    class="stock-panel stock-order-panel"
+                    id="stock-order-panel"
+                    aria-label="웹 거래"
+                    tabindex="-1"
+                    data-stock-order-panel
+                  >
+                    <div class="stock-order-head">
+                      <span>웹 거래</span>
+                      <strong data-stock-order-symbol>DMD</strong>
+                    </div>
+                    <div class="stock-order-meta" aria-label="선택 종목 주문 정보">
+                      <span>현재가 <strong data-stock-order-price>--</strong></span>
+                      <span>보유 <strong data-stock-order-position>--</strong></span>
+                      <span>잔고 <strong data-stock-order-balance>--</strong></span>
+                    </div>
+                    <label class="stock-order-field">
+                      <span>수량</span>
+                      <input
+                        data-stock-order-quantity
+                        type="number"
+                        min="1"
+                        max="500"
+                        value="1"
+                        inputmode="numeric"
+                        disabled
+                      />
+                    </label>
+                    <div class="stock-order-actions">
+                      <button type="button" data-stock-order-side="buy" disabled>매수</button>
+                      <button type="button" data-stock-order-side="sell" disabled>매도</button>
+                    </div>
+                    <p class="stock-order-message" data-stock-order-message>
+                      로그인과 캐릭터 인증이 끝나면 이 화면에서 그래프를 보면서 바로 거래할 수 있습니다.
+                    </p>
+                    <a class="stock-trade-link stock-order-login-link" href="/login.html">인증 상태 확인</a>
                   </section>
                 </div>
               </div>

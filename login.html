@@ -201,23 +201,13 @@
               </div>
               <em data-stock-trader-balance>--</em>
             </div>
-            <div class="stock-trader-grid">
-              <label>
-                <span>종목</span>
-                <select data-stock-symbol-select disabled></select>
-              </label>
-              <label>
-                <span>수량</span>
-                <input data-stock-quantity type="number" min="1" max="500" value="1" inputmode="numeric" disabled />
-              </label>
-            </div>
             <div class="stock-trader-quote">
               <span data-stock-trader-price>현재가 --</span>
               <strong data-stock-trader-position>보유 --</strong>
             </div>
-            <div class="stock-trader-actions">
-              <button type="button" data-stock-side="buy" disabled>매수</button>
-              <button type="button" data-stock-side="sell" disabled>매도</button>
+            <div class="stock-trader-cta">
+              <a class="stock-trader-link" href="/plugins.html#stock-marketplace">그래프 보며 거래하기</a>
+              <span>STOCK 화면에서 차트와 체결 내역을 보면서 매수/매도합니다.</span>
             </div>
             <p class="stock-trader-message" data-stock-trader-message>
               캐릭터 인증 후 서버 머니로 24시간 주식을 거래할 수 있습니다.
@@ -229,11 +219,18 @@
               <span>인벤토리</span>
               <strong data-inventory-summary>인증 후 표시</strong>
             </div>
-            <button class="auth-ghost" type="button" data-refresh-inventory disabled>새로고침</button>
+            <div class="inventory-tools">
+              <div class="inventory-view-switch" role="group" aria-label="인벤토리 보기">
+                <button type="button" data-inventory-view="grid" aria-pressed="true">슬롯</button>
+                <button type="button" data-inventory-view="graph" aria-pressed="false">그래프</button>
+              </div>
+              <button class="auth-ghost" type="button" data-refresh-inventory disabled>새로고침</button>
+            </div>
           </div>
 
           <div class="inventory-equipment" aria-label="착용 및 손 아이템" data-inventory-equipment></div>
           <div class="inventory-grid" aria-label="캐릭터 인벤토리" data-inventory-grid></div>
+          <div class="inventory-graph" aria-label="인벤토리 그래프" data-inventory-graph hidden></div>
           <p class="inventory-empty" data-inventory-empty>캐릭터 인증 후 표시됩니다.</p>
         </section>
       </div>
