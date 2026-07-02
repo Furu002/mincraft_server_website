@@ -9,6 +9,10 @@ const INVENTORY_VIEW_KEY = "nfoifsb.inventoryView";
 const GOOGLE_SCRIPT_SRC = "https://accounts.google.com/gsi/client";
 
 const googleClientId = import.meta.env.VITE_GOOGLE_CLIENT_ID || "";
+const isLocalHost = ["localhost", "127.0.0.1", "::1"].includes(window.location.hostname);
+const productionPlayerApiBase = "https://minecraftserver1.tail16d543.ts.net/minecraft";
+const productionPlayerApiFallbackBase = "https://api.nfoifsb.kr/minecraft";
+const localPlayerApiBase = isLocalHost ? "http://127.0.0.1:8787/minecraft" : "";
 function apiBaseList(...values) {
   return [
     ...new Set(
@@ -21,8 +25,9 @@ function apiBaseList(...values) {
 }
 
 const playerApiBases = apiBaseList(
-  import.meta.env.VITE_PLAYER_API_BASE,
-  import.meta.env.VITE_PLAYER_API_FALLBACK_BASES,
+  import.meta.env.VITE_PLAYER_API_BASE || productionPlayerApiBase,
+  import.meta.env.VITE_PLAYER_API_FALLBACK_BASES || productionPlayerApiFallbackBase,
+  localPlayerApiBase,
 );
 const playerApiBase = playerApiBases[0] || "";
 const MINECRAFT_TEXTURE_BASE = "https://assets.mcasset.cloud/latest/assets/minecraft/textures";
@@ -38,7 +43,6 @@ const INVENTORY_SLOT_ORDER = [
   ...Array.from({ length: 27 }, (_, index) => index + 9),
   ...Array.from({ length: 9 }, (_, index) => index),
 ];
-const isLocalHost = ["localhost", "127.0.0.1", "::1"].includes(window.location.hostname);
 const localAuthApiBase = isLocalHost ? "http://127.0.0.1:4174" : "";
 const authApiBase = (import.meta.env.VITE_AUTH_API_BASE || localAuthApiBase).replace(/\/$/, "");
 const allowLocalAuthPreview = !authApiBase && isLocalHost;
