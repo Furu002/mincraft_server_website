@@ -5,6 +5,7 @@ const STATUS_API = `https://api.mcstatus.io/v2/status/java/${SERVER_ADDRESS}`;
 const STATUS_TIMEOUT_MS = 8000;
 const PLAYER_API_BASE = (import.meta.env.VITE_PLAYER_API_BASE || "").replace(/\/$/, "");
 const SERVER_OVERVIEW_TIMEOUT_MS = 6000;
+const SERVER_OVERVIEW_INTERVAL_MS = 10000;
 const STOCK_MARKET_TIMEOUT_MS = 6000;
 
 const statusDot = document.querySelector("[data-status-dot]");
@@ -20,10 +21,10 @@ const latencyLabel = document.querySelector("[data-latency]");
 const statusHealth = document.querySelector("[data-status-health]");
 const playerSummary = document.querySelector("[data-player-summary]");
 const motdLabel = document.querySelector("[data-motd]");
-const ramSummary = document.querySelector("[data-ram-summary]");
-const ramPercent = document.querySelector("[data-ram-percent]");
-const ramMeter = document.querySelector("[data-ram-meter]");
-const ramDetail = document.querySelector("[data-ram-detail]");
+const ramSummaries = document.querySelectorAll("[data-ram-summary]");
+const ramPercents = document.querySelectorAll("[data-ram-percent]");
+const ramMeters = document.querySelectorAll("[data-ram-meter]");
+const ramDetails = document.querySelectorAll("[data-ram-detail]");
 const playerHeads = document.querySelector("[data-player-heads]");
 const playerChart = document.querySelector("[data-player-chart]");
 const sectionLinks = document.querySelectorAll("[data-section-link]");
@@ -281,14 +282,22 @@ function renderStatusData(data, options = {}) {
 }
 
 function hasRamWidgets() {
-  return ramSummary || ramPercent || ramMeter || ramDetail;
+  return ramSummaries.length || ramPercents.length || ramMeters.length || ramDetails.length;
 }
 
 function renderRamUnavailable(message) {
-  if (ramSummary) ramSummary.textContent = "--";
-  if (ramPercent) ramPercent.textContent = "--";
-  if (ramMeter) ramMeter.style.width = "0%";
-  if (ramDetail) ramDetail.textContent = message;
+  ramSummaries.forEach((summary) => {
+    summary.textContent = "--";
+  });
+  ramPercents.forEach((percent) => {
+    percent.textContent = "--";
+  });
+  ramMeters.forEach((meter) => {
+    meter.style.width = "0%";
+  });
+  ramDetails.forEach((detail) => {
+    detail.textContent = message;
+  });
 }
 
 function renderServerOverview(data) {
@@ -303,25 +312,36 @@ function renderServerOverview(data) {
   const usedPercent = Number.isFinite(reportedPercent) ? reportedPercent : calculatedPercent;
 
   if (!Number.isFinite(usedBytes) || !Number.isFinite(maxBytes) || maxBytes <= 0) {
-    renderRamUnavailable("RAM data is unavailable.");
+    renderRamUnavailable("RAM 사용량 데이터를 받을 수 없습니다.");
     return;
   }
 
   const clampedPercent = Math.max(0, Math.min(100, usedPercent));
-  if (ramSummary) ramSummary.textContent = `${formatBytes(usedBytes)} / ${formatBytes(maxBytes)}`;
-  if (ramPercent) ramPercent.textContent = `${formatPercent(clampedPercent)} used`;
-  if (ramMeter) ramMeter.style.width = `${Math.round(clampedPercent)}%`;
-  if (ramDetail) {
-    const allocated = Number.isFinite(totalBytes) ? formatBytes(totalBytes) : "--";
-    const free = Number.isFinite(freeBytes) ? formatBytes(freeBytes) : "--";
-    ramDetail.textContent = `Allocated ${allocated}, free ${free}.`;
-  }
+  const summaryText = `${formatBytes(usedBytes)} / ${formatBytes(maxBytes)}`;
+  const percentText = `${formatPercent(clampedPercent)} 사용 중`;
+  const allocated = Number.isFinite(totalBytes) ? formatBytes(totalBytes) : "--";
+  const free = Number.isFinite(freeBytes) ? formatBytes(freeBytes) : "--";
+  const updated = formatStatusTime(data?.updatedAt || Date.now());
+  const detailText = `할당 ${allocated}, 여유 ${free}. ${updated} 갱신`;
+
+  ramSummaries.forEach((summary) => {
+    summary.textContent = summaryText;
+  });
+  ramPercents.forEach((percent) => {
+    percent.textContent = percentText;
+  });
+  ramMeters.forEach((meter) => {
+    meter.style.width = `${Math.round(clampedPercent)}%`;
+  });
+  ramDetails.forEach((detail) => {
+    detail.textContent = detailText;
+  });
 }
 
 async function refreshServerOverview() {
   if (!hasRamWidgets()) return;
   if (!PLAYER_API_BASE) {
-    renderRamUnavailable("Set VITE_PLAYER_API_BASE to show live RAM.");
+    renderRamUnavailable("실시간 RAM API가 아직 연결되지 않았습니다.");
     return;
   }
 
@@ -335,7 +355,7 @@ async function refreshServerOverview() {
     if (!response.ok) throw new Error(`server overview ${response.status}`);
     renderServerOverview(await response.json());
   } catch {
-    renderRamUnavailable("AuroraLink RAM bridge is unavailable.");
+    renderRamUnavailable("서버 RAM 브리지를 사용할 수 없습니다.");
   } finally {
     window.clearTimeout(timer);
   }
@@ -1259,5 +1279,5 @@ if (statusDot || cacheState) {
   startVisiblePoll(refreshStatus, 60000);
 }
 if (hasRamWidgets()) {
-  startVisiblePoll(refreshServerOverview, 60000);
+  startVisiblePoll(refreshServerOverview, SERVER_OVERVIEW_INTERVAL_MS);
 }

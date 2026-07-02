@@ -802,6 +802,32 @@ a {
   line-height: 1.08;
 }
 
+.detail-grid .ram-live-card {
+  min-height: 156px;
+}
+
+.ram-live-card em {
+  display: block;
+  margin-top: 8px;
+  color: #9be6ad;
+  font-size: 14px;
+  font-style: normal;
+  font-weight: 850;
+}
+
+.ram-card-meter {
+  height: 8px;
+  margin-top: 14px;
+}
+
+.ram-live-card p {
+  margin: 10px 0 0;
+  color: var(--text-faint);
+  font-size: 12px;
+  line-height: 1.35;
+  font-weight: 650;
+}
+
 .section-dashboard {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
