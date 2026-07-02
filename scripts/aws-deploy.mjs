@@ -274,18 +274,54 @@ async function findDistribution() {
   return undefined;
 }
 
-async function attachSecurityHeadersPolicy(distributionId, responseHeadersPolicyId) {
+async function syncDistributionDefaults(distributionId, bucket, oacId, responseHeadersPolicyId) {
   const current = await cloudfront.send(new GetDistributionConfigCommand({ Id: distributionId }));
   const config = current.DistributionConfig;
-  if (config.DefaultCacheBehavior?.ResponseHeadersPolicyId === responseHeadersPolicyId) {
-    log("CloudFront security headers policy already attached");
+  const desiredDomainName = `${bucket}.s3.${region}.amazonaws.com`;
+  const originItems = config.Origins?.Items || [];
+  const existingOrigin = originItems.find((item) => item.Id === originId) || originItems[0] || {};
+  const desiredOrigin = {
+    Id: originId,
+    DomainName: desiredDomainName,
+    OriginPath: "",
+    OriginAccessControlId: oacId,
+    S3OriginConfig: {
+      OriginAccessIdentity: "",
+    },
+  };
+  for (const key of ["ConnectionAttempts", "ConnectionTimeout", "CustomHeaders", "OriginShield"]) {
+    if (existingOrigin[key] !== undefined) desiredOrigin[key] = existingOrigin[key];
+  }
+  const nextOrigins = [
+    desiredOrigin,
+    ...originItems.filter((item) => item !== existingOrigin && item.Id !== originId),
+  ];
+  const defaultCacheBehavior = {
+    ...config.DefaultCacheBehavior,
+    TargetOriginId: originId,
+    ResponseHeadersPolicyId: responseHeadersPolicyId,
+  };
+
+  const originChanged =
+    existingOrigin.Id !== desiredOrigin.Id
+    || existingOrigin.DomainName !== desiredOrigin.DomainName
+    || existingOrigin.OriginAccessControlId !== desiredOrigin.OriginAccessControlId
+    || existingOrigin.OriginPath !== desiredOrigin.OriginPath
+    || existingOrigin.S3OriginConfig?.OriginAccessIdentity !== "";
+  const behaviorChanged =
+    config.DefaultCacheBehavior?.TargetOriginId !== defaultCacheBehavior.TargetOriginId
+    || config.DefaultCacheBehavior?.ResponseHeadersPolicyId !== defaultCacheBehavior.ResponseHeadersPolicyId;
+
+  if (!originChanged && !behaviorChanged) {
+    log("CloudFront distribution origin and security headers are already current");
     return;
   }
 
-  config.DefaultCacheBehavior = {
-    ...config.DefaultCacheBehavior,
-    ResponseHeadersPolicyId: responseHeadersPolicyId,
+  config.Origins = {
+    Quantity: nextOrigins.length,
+    Items: nextOrigins,
   };
+  config.DefaultCacheBehavior = defaultCacheBehavior;
 
   await cloudfront.send(
     new UpdateDistributionCommand({
@@ -294,14 +330,14 @@ async function attachSecurityHeadersPolicy(distributionId, responseHeadersPolicy
       DistributionConfig: config,
     }),
   );
-  log("Attached CloudFront security headers policy");
+  log("Updated CloudFront distribution origin/security headers");
 }
 
 async function ensureDistribution(bucket, oacId, responseHeadersPolicyId) {
   const existing = await findDistribution();
   if (existing?.Id) {
     log(`CloudFront distribution exists: ${existing.Id}`);
-    await attachSecurityHeadersPolicy(existing.Id, responseHeadersPolicyId);
+    await syncDistributionDefaults(existing.Id, bucket, oacId, responseHeadersPolicyId);
     return existing;
   }
 
