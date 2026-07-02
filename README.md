@@ -169,9 +169,11 @@ arn:aws:iam::358982198253:role/GitHubActionsMincraftServerWebsiteDeployRole
 
 ```text
 AWS_REGION              # 기본값: ap-northeast-1
-VITE_GOOGLE_CLIENT_ID   # Google 로그인 버튼 활성화
+VITE_GOOGLE_CLIENT_ID   # Google 로그인 버튼 활성화 및 서버 측 ID 토큰 검증 audience
 VITE_AUTH_API_BASE      # 회원가입/로그인 API 주소
 VITE_PLAYER_API_BASE    # AuroraLink 플레이어 API 주소, 예: https://api.nfoifsb.kr/minecraft
+AUTH_EMAIL_FROM         # 인증/비밀번호 재설정 메일 발신자, 기본값 no-reply@nfoifsb.kr
+AUTH_APP_BASE_URL       # 메일 인증 링크에 들어갈 사이트 URL
 SITE_BUCKET             # 기본값: menhera-minecraft-server-website
 SITE_DOMAIN             # 기본값: www.nfoifsb.kr
 CERTIFICATE_ARN         # 기본값: www.nfoifsb.kr용 us-east-1 ACM 인증서 ARN

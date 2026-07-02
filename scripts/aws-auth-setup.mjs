@@ -41,6 +41,10 @@ const siteDomain = process.env.SITE_DOMAIN || "www.nfoifsb.kr";
 const localOrigins = ["http://127.0.0.1:5173", "http://localhost:5173"];
 const defaultAllowedOrigins = [`https://${siteDomain}`, ...localOrigins].join(",");
 const allowedOrigins = process.env.AUTH_ALLOWED_ORIGINS || defaultAllowedOrigins;
+const authEmailFrom =
+  process.env.AUTH_EMAIL_FROM || process.env.EMAIL_FROM || `no-reply@${siteDomain.replace(/^www\./, "")}`;
+const authAppBaseUrl = (process.env.AUTH_APP_BASE_URL || `https://${siteDomain}`).replace(/\/$/, "");
+const googleClientId = process.env.GOOGLE_CLIENT_ID || process.env.VITE_GOOGLE_CLIENT_ID || "";
 const tableName = process.env.AUTH_USERS_TABLE || `${stackName}-users`;
 const roleName = process.env.AUTH_LAMBDA_ROLE || `${stackName}-lambda-role`;
 const functionName = process.env.AUTH_LAMBDA_FUNCTION || `${stackName}-api`;
@@ -174,6 +178,11 @@ async function ensureRole(tableArn) {
             Action: ["dynamodb:GetItem", "dynamodb:PutItem", "dynamodb:UpdateItem"],
             Resource: tableArn,
           },
+          {
+            Effect: "Allow",
+            Action: ["ses:SendEmail"],
+            Resource: "*",
+          },
         ],
       }),
     }),
@@ -280,6 +289,9 @@ async function ensureFunction(roleArn) {
     USERS_TABLE: tableName,
     AUTH_PEPPER: authPepper,
     AUTH_ALLOWED_ORIGINS: allowedOrigins,
+    AUTH_APP_BASE_URL: authAppBaseUrl,
+    AUTH_EMAIL_FROM: authEmailFrom,
+    GOOGLE_CLIENT_ID: googleClientId,
     SESSION_TTL_SECONDS: String(process.env.SESSION_TTL_SECONDS || 60 * 60 * 24 * 14),
     PASSWORD_ITERATIONS: String(process.env.PASSWORD_ITERATIONS || 210000),
   };
@@ -414,7 +426,15 @@ async function ensureRoutes(apiId, integrationId) {
   const existingKeys = new Set((routes.Items || []).map((route) => route.RouteKey));
   const target = `integrations/${integrationId}`;
 
-  for (const routeKey of ["POST /auth/signup", "POST /auth/login", "POST /auth/reset"]) {
+  for (const routeKey of [
+    "POST /auth/signup",
+    "POST /auth/verify-email",
+    "POST /auth/resend-verification",
+    "POST /auth/login",
+    "POST /auth/reset",
+    "POST /auth/reset/confirm",
+    "POST /auth/google",
+  ]) {
     if (existingKeys.has(routeKey)) continue;
     await apigw.send(
       new CreateRouteCommand({
@@ -482,10 +502,18 @@ async function main() {
     viteEnv: {
       VITE_AUTH_API_BASE: api.ApiEndpoint,
     },
+    email: {
+      from: authEmailFrom,
+      appBaseUrl: authAppBaseUrl,
+      note: "The sender identity must be verified in Amazon SES before production email delivery works.",
+    },
     security: {
       passwordStorage: "PBKDF2-SHA256 with per-user salt and Lambda pepper",
       dynamodbEncryption: "SSE enabled",
       keyStorage: "AUTH_PEPPER stored in encrypted Lambda environment; never committed to git",
+      googleLogin: googleClientId
+        ? "Google ID tokens are verified server-side before issuing a site session"
+        : "Set VITE_GOOGLE_CLIENT_ID or GOOGLE_CLIENT_ID to enable server-side Google login",
     },
   };
 

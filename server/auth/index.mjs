@@ -1,20 +1,42 @@
-import { createHmac, pbkdf2Sync, randomBytes, timingSafeEqual } from "node:crypto";
+import {
+  createHmac,
+  createPublicKey,
+  createVerify,
+  pbkdf2Sync,
+  randomBytes,
+  randomInt,
+  timingSafeEqual,
+} from "node:crypto";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { DynamoDBClient, GetItemCommand, PutItemCommand, UpdateItemCommand } from "@aws-sdk/client-dynamodb";
+import { SESv2Client, SendEmailCommand } from "@aws-sdk/client-sesv2";
 
 const client = new DynamoDBClient({});
+const ses = new SESv2Client({ region: process.env.SES_REGION || process.env.AWS_REGION || process.env.AWS_DEFAULT_REGION });
 const tableName = process.env.USERS_TABLE;
 const authStore = process.env.AUTH_STORE || (tableName ? "dynamodb" : "file");
 const authPepper = process.env.AUTH_PEPPER || (authStore === "file" ? "local-dev-pepper-change-before-production" : "");
-const localUsersFile =
-  process.env.AUTH_LOCAL_USERS_FILE || join(process.cwd(), ".local", "auth", "users.json");
+const localUsersFile = process.env.AUTH_LOCAL_USERS_FILE || join(process.cwd(), ".local", "auth", "users.json");
 const sessionTtlSeconds = Number(process.env.SESSION_TTL_SECONDS || 60 * 60 * 24 * 14);
+const challengeTtlSeconds = Number(process.env.AUTH_CHALLENGE_TTL_SECONDS || 60 * 30);
 const allowedOrigins = (process.env.AUTH_ALLOWED_ORIGINS || "")
   .split(",")
   .map((origin) => origin.trim())
   .filter(Boolean);
 const passwordIterations = Number(process.env.PASSWORD_ITERATIONS || 210000);
+const emailFrom = process.env.AUTH_EMAIL_FROM || process.env.EMAIL_FROM || "";
+const appBaseUrl = (
+  process.env.AUTH_APP_BASE_URL ||
+  allowedOrigins.find((origin) => origin.startsWith("https://")) ||
+  "http://127.0.0.1:5173"
+).replace(/\/$/, "");
+const googleClientId = process.env.GOOGLE_CLIENT_ID || process.env.VITE_GOOGLE_CLIENT_ID || "";
+
+let googleKeyCache = {
+  expiresAt: 0,
+  keys: [],
+};
 
 function corsOrigin(origin) {
   if (!origin) return allowedOrigins[0] || "*";
@@ -59,6 +81,18 @@ function userKey(email) {
   return `EMAIL#${email}`;
 }
 
+function s(value) {
+  return { S: String(value) };
+}
+
+function n(value) {
+  return { N: String(value) };
+}
+
+function b(value) {
+  return { BOOL: Boolean(value) };
+}
+
 async function readLocalUsers() {
   try {
     return JSON.parse(await readFile(localUsersFile, "utf8"));
@@ -77,12 +111,25 @@ function hashPassword(password, salt) {
   return pbkdf2Sync(`${password}:${authPepper}`, salt, passwordIterations, 32, "sha256").toString("base64");
 }
 
+function hashSecret(value) {
+  return createHmac("sha256", authPepper).update(String(value)).digest("base64url");
+}
+
+function secureMatches(expectedHash, value) {
+  if (!expectedHash || !value) return false;
+  const expected = Buffer.from(expectedHash);
+  const actual = Buffer.from(hashSecret(value));
+  return expected.length === actual.length && timingSafeEqual(expected, actual);
+}
+
 function signSession(user) {
   const now = Math.floor(Date.now() / 1000);
   const payload = {
     email: user.email,
     name: user.name,
-    provider: "site",
+    provider: user.provider || "site",
+    sub: user.sub || "",
+    emailVerified: Boolean(user.emailVerified),
     iat: now,
     exp: now + sessionTtlSeconds,
   };
@@ -94,11 +141,14 @@ function signSession(user) {
   };
 }
 
-function publicUser(item) {
+function publicUser(item, providerOverride = "") {
   return {
     email: item.email.S,
-    name: item.nickname.S,
-    provider: "site",
+    name: item.nickname?.S || item.name?.S || item.email.S,
+    picture: item.picture?.S || "",
+    provider: providerOverride || item.provider?.S || "site",
+    sub: item.googleSub?.S || "",
+    emailVerified: item.emailVerified?.BOOL === true,
     signedInAt: new Date().toISOString(),
   };
 }
@@ -113,7 +163,7 @@ async function getUser(email) {
     new GetItemCommand({
       TableName: tableName,
       Key: {
-        pk: { S: userKey(email) },
+        pk: s(userKey(email)),
       },
       ConsistentRead: true,
     }),
@@ -144,31 +194,244 @@ async function putUser(item) {
   );
 }
 
-async function markResetRequested(email, requestedAt) {
+async function updateUser(email, attributes, removeAttributes = []) {
   if (authStore === "file") {
     const users = await readLocalUsers();
     const key = userKey(email);
-    if (users[key]) {
-      users[key].resetRequestedAt = { S: requestedAt };
-      users[key].updatedAt = { S: requestedAt };
-      await writeLocalUsers(users);
+    const item = users[key];
+    if (!item) {
+      const error = new Error("User not found.");
+      error.name = "ConditionalCheckFailedException";
+      throw error;
     }
-    return;
+    Object.assign(item, attributes);
+    for (const name of removeAttributes) delete item[name];
+    users[key] = item;
+    await writeLocalUsers(users);
+    return item;
   }
 
-  await client.send(
+  const names = {};
+  const values = {};
+  const sets = [];
+  const removes = [];
+  let index = 0;
+
+  for (const [name, value] of Object.entries(attributes)) {
+    const nameKey = `#n${index}`;
+    const valueKey = `:v${index}`;
+    names[nameKey] = name;
+    values[valueKey] = value;
+    sets.push(`${nameKey} = ${valueKey}`);
+    index += 1;
+  }
+
+  for (const name of removeAttributes) {
+    const nameKey = `#n${index}`;
+    names[nameKey] = name;
+    removes.push(nameKey);
+    index += 1;
+  }
+
+  const updateParts = [];
+  if (sets.length) updateParts.push(`SET ${sets.join(", ")}`);
+  if (removes.length) updateParts.push(`REMOVE ${removes.join(", ")}`);
+
+  const result = await client.send(
     new UpdateItemCommand({
       TableName: tableName,
       Key: {
-        pk: { S: userKey(email) },
+        pk: s(userKey(email)),
       },
-      UpdateExpression: "SET resetRequestedAt = :now",
+      UpdateExpression: updateParts.join(" "),
       ConditionExpression: "attribute_exists(pk)",
-      ExpressionAttributeValues: {
-        ":now": { S: requestedAt },
+      ExpressionAttributeNames: names,
+      ExpressionAttributeValues: Object.keys(values).length ? values : undefined,
+      ReturnValues: "ALL_NEW",
+    }),
+  );
+  return result.Attributes;
+}
+
+function createChallenge(prefix) {
+  const token = randomBytes(32).toString("base64url");
+  const code = String(randomInt(100000, 1000000));
+  const expiresAt = new Date(Date.now() + challengeTtlSeconds * 1000).toISOString();
+  return {
+    token,
+    code,
+    expiresAt,
+    tokenHash: hashSecret(`${prefix}:token:${token}`),
+    codeHash: hashSecret(`${prefix}:code:${code}`),
+  };
+}
+
+function challengeMatches(item, prefix, token, code) {
+  const expiresAt = item[`${prefix}ExpiresAt`]?.S;
+  if (!expiresAt || Date.parse(expiresAt) < Date.now()) return false;
+
+  const tokenHash = item[`${prefix}TokenHash`]?.S;
+  const codeHash = item[`${prefix}CodeHash`]?.S;
+  return (
+    secureMatches(tokenHash, `${prefix}:token:${token}`) ||
+    secureMatches(codeHash, `${prefix}:code:${String(code || "").trim()}`)
+  );
+}
+
+function htmlEscape(value) {
+  return String(value)
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;");
+}
+
+async function sendAuthEmail({ to, subject, text, html }) {
+  if (!emailFrom) {
+    if (authStore === "file") return { sent: false, reason: "email_not_configured" };
+    throw new Error("Auth email sender is not configured.");
+  }
+
+  await ses.send(
+    new SendEmailCommand({
+      FromEmailAddress: emailFrom,
+      Destination: {
+        ToAddresses: [to],
+      },
+      Content: {
+        Simple: {
+          Subject: {
+            Charset: "UTF-8",
+            Data: subject,
+          },
+          Body: {
+            Text: {
+              Charset: "UTF-8",
+              Data: text,
+            },
+            Html: {
+              Charset: "UTF-8",
+              Data: html,
+            },
+          },
+        },
       },
     }),
   );
+
+  return { sent: true };
+}
+
+function buildVerificationUrl(email, token) {
+  const params = new URLSearchParams({ mode: "verify", email, token });
+  return `${appBaseUrl}/login.html?${params.toString()}`;
+}
+
+function buildResetUrl(email, token) {
+  const params = new URLSearchParams({ mode: "reset-confirm", email, token });
+  return `${appBaseUrl}/login.html?${params.toString()}`;
+}
+
+async function sendVerificationEmail(email, challenge) {
+  const link = buildVerificationUrl(email, challenge.token);
+  const text = [
+    "nfoifsb.kr 이메일 인증",
+    "",
+    `인증 코드: ${challenge.code}`,
+    `인증 링크: ${link}`,
+    "",
+    "30분 안에 인증을 완료해 주세요.",
+  ].join("\n");
+  const html = `
+    <div style="font-family:Arial,sans-serif;line-height:1.6;color:#10201c">
+      <h1>nfoifsb.kr 이메일 인증</h1>
+      <p>아래 코드를 로그인 화면에 입력하거나 버튼을 눌러 인증을 완료하세요.</p>
+      <p style="font-size:28px;font-weight:700;letter-spacing:4px">${htmlEscape(challenge.code)}</p>
+      <p><a href="${htmlEscape(link)}">이메일 인증하기</a></p>
+      <p>이 링크와 코드는 30분 뒤 만료됩니다.</p>
+    </div>`;
+  const delivery = await sendAuthEmail({ to: email, subject: "nfoifsb.kr 이메일 인증", text, html });
+  return { ...delivery, preview: authStore === "file" ? { code: challenge.code, link } : undefined };
+}
+
+async function sendPasswordResetEmail(email, challenge) {
+  const link = buildResetUrl(email, challenge.token);
+  const text = [
+    "nfoifsb.kr 비밀번호 재설정",
+    "",
+    `재설정 코드: ${challenge.code}`,
+    `재설정 링크: ${link}`,
+    "",
+    "30분 안에 새 비밀번호를 설정해 주세요.",
+  ].join("\n");
+  const html = `
+    <div style="font-family:Arial,sans-serif;line-height:1.6;color:#10201c">
+      <h1>nfoifsb.kr 비밀번호 재설정</h1>
+      <p>아래 코드를 입력하거나 버튼을 눌러 새 비밀번호를 설정하세요.</p>
+      <p style="font-size:28px;font-weight:700;letter-spacing:4px">${htmlEscape(challenge.code)}</p>
+      <p><a href="${htmlEscape(link)}">비밀번호 재설정하기</a></p>
+      <p>이 링크와 코드는 30분 뒤 만료됩니다.</p>
+    </div>`;
+  const delivery = await sendAuthEmail({ to: email, subject: "nfoifsb.kr 비밀번호 재설정", text, html });
+  return { ...delivery, preview: authStore === "file" ? { code: challenge.code, link } : undefined };
+}
+
+function base64UrlDecode(value) {
+  const normalized = String(value || "").replace(/-/g, "+").replace(/_/g, "/");
+  return Buffer.from(normalized.padEnd(normalized.length + ((4 - (normalized.length % 4)) % 4), "="), "base64");
+}
+
+function parseJwt(token) {
+  const [headerRaw, payloadRaw, signatureRaw] = String(token || "").split(".");
+  if (!headerRaw || !payloadRaw || !signatureRaw) throw new Error("Invalid Google credential.");
+  return {
+    headerRaw,
+    payloadRaw,
+    signatureRaw,
+    header: JSON.parse(base64UrlDecode(headerRaw).toString("utf8")),
+    payload: JSON.parse(base64UrlDecode(payloadRaw).toString("utf8")),
+  };
+}
+
+async function getGoogleKeys() {
+  if (googleKeyCache.keys.length && googleKeyCache.expiresAt > Date.now()) return googleKeyCache.keys;
+
+  const result = await fetch("https://www.googleapis.com/oauth2/v3/certs");
+  if (!result.ok) throw new Error("Could not load Google public keys.");
+  const payload = await result.json();
+  const cacheControl = result.headers.get("cache-control") || "";
+  const maxAgeMatch = /max-age=(\d+)/i.exec(cacheControl);
+  const maxAgeSeconds = maxAgeMatch ? Number(maxAgeMatch[1]) : 3600;
+  googleKeyCache = {
+    expiresAt: Date.now() + maxAgeSeconds * 1000,
+    keys: payload.keys || [],
+  };
+  return googleKeyCache.keys;
+}
+
+async function verifyGoogleCredential(credential) {
+  if (!googleClientId) throw new Error("Google client ID is not configured.");
+  const token = parseJwt(credential);
+  const key = (await getGoogleKeys()).find((candidate) => candidate.kid === token.header.kid);
+  if (!key) throw new Error("Google public key was not found.");
+
+  const verifier = createVerify("RSA-SHA256");
+  verifier.update(`${token.headerRaw}.${token.payloadRaw}`);
+  verifier.end();
+  const ok = verifier.verify(createPublicKey({ key, format: "jwk" }), base64UrlDecode(token.signatureRaw));
+  if (!ok) throw new Error("Invalid Google credential signature.");
+
+  const now = Math.floor(Date.now() / 1000);
+  if (!["accounts.google.com", "https://accounts.google.com"].includes(token.payload.iss)) {
+    throw new Error("Invalid Google issuer.");
+  }
+  if (token.payload.aud !== googleClientId) throw new Error("Invalid Google audience.");
+  if (Number(token.payload.exp || 0) <= now) throw new Error("Google credential has expired.");
+  if (!token.payload.sub || !token.payload.email || token.payload.email_verified !== true) {
+    throw new Error("Google email is not verified.");
+  }
+
+  return token.payload;
 }
 
 async function handleSignup(body, origin) {
@@ -176,9 +439,7 @@ async function handleSignup(body, origin) {
   const nickname = normalizeNickname(body.nickname);
   const password = String(body.password || "");
 
-  if (!validateEmail(email)) {
-    return response(400, { message: "올바른 이메일을 입력해 주세요." }, origin);
-  }
+  if (!validateEmail(email)) return response(400, { message: "올바른 이메일을 입력해 주세요." }, origin);
   if (nickname.length < 2 || nickname.length > 24) {
     return response(400, { message: "닉네임은 2~24자로 입력해 주세요." }, origin);
   }
@@ -188,16 +449,21 @@ async function handleSignup(body, origin) {
 
   const salt = randomBytes(16).toString("base64");
   const now = new Date().toISOString();
+  const challenge = createChallenge("emailVerification");
   const item = {
-    pk: { S: userKey(email) },
-    email: { S: email },
-    nickname: { S: nickname },
-    passwordHash: { S: hashPassword(password, salt) },
-    passwordSalt: { S: salt },
-    passwordIterations: { N: String(passwordIterations) },
-    provider: { S: "site" },
-    createdAt: { S: now },
-    updatedAt: { S: now },
+    pk: s(userKey(email)),
+    email: s(email),
+    nickname: s(nickname),
+    passwordHash: s(hashPassword(password, salt)),
+    passwordSalt: s(salt),
+    passwordIterations: n(passwordIterations),
+    provider: s("site"),
+    emailVerified: b(false),
+    emailVerificationTokenHash: s(challenge.tokenHash),
+    emailVerificationCodeHash: s(challenge.codeHash),
+    emailVerificationExpiresAt: s(challenge.expiresAt),
+    createdAt: s(now),
+    updatedAt: s(now),
   };
 
   try {
@@ -209,8 +475,75 @@ async function handleSignup(body, origin) {
     throw error;
   }
 
-  const user = publicUser(item);
-  return response(201, { user, session: signSession(user) }, origin);
+  const delivery = await sendVerificationEmail(email, challenge);
+  return response(
+    201,
+    {
+      message: "인증 메일을 보냈습니다. 이메일 인증 후 로그인할 수 있습니다.",
+      verificationRequired: true,
+      emailDelivery: { sent: delivery.sent, reason: delivery.reason || "" },
+      emailPreview: delivery.preview,
+    },
+    origin,
+  );
+}
+
+async function handleVerifyEmail(body, origin) {
+  const email = normalizeEmail(body.email);
+  const token = String(body.token || "").trim();
+  const code = String(body.code || "").trim();
+  if (!validateEmail(email) || (!token && !code)) {
+    return response(400, { message: "이메일과 인증 코드가 필요합니다." }, origin);
+  }
+
+  const item = await getUser(email);
+  if (!item) return response(400, { message: "인증 정보를 확인하지 못했습니다." }, origin);
+  if (item.emailVerified?.BOOL === true) {
+    const user = publicUser(item);
+    return response(200, { user, session: signSession(user) }, origin);
+  }
+  if (!challengeMatches(item, "emailVerification", token, code)) {
+    return response(400, { message: "인증 코드가 만료되었거나 올바르지 않습니다." }, origin);
+  }
+
+  const updated = await updateUser(
+    email,
+    {
+      emailVerified: b(true),
+      updatedAt: s(new Date().toISOString()),
+    },
+    ["emailVerificationTokenHash", "emailVerificationCodeHash", "emailVerificationExpiresAt"],
+  );
+  const user = publicUser(updated);
+  return response(200, { user, session: signSession(user), message: "이메일 인증이 완료되었습니다." }, origin);
+}
+
+async function handleResendVerification(body, origin) {
+  const email = normalizeEmail(body.email);
+  if (!validateEmail(email)) return response(400, { message: "올바른 이메일을 입력해 주세요." }, origin);
+
+  const item = await getUser(email);
+  if (!item || item.emailVerified?.BOOL === true) {
+    return response(200, { message: "가입 정보가 있으면 인증 메일을 다시 보냅니다." }, origin);
+  }
+
+  const challenge = createChallenge("emailVerification");
+  await updateUser(email, {
+    emailVerificationTokenHash: s(challenge.tokenHash),
+    emailVerificationCodeHash: s(challenge.codeHash),
+    emailVerificationExpiresAt: s(challenge.expiresAt),
+    updatedAt: s(new Date().toISOString()),
+  });
+  const delivery = await sendVerificationEmail(email, challenge);
+  return response(
+    200,
+    {
+      message: "인증 메일을 다시 보냈습니다.",
+      emailDelivery: { sent: delivery.sent, reason: delivery.reason || "" },
+      emailPreview: delivery.preview,
+    },
+    origin,
+  );
 }
 
 async function handleLogin(body, origin) {
@@ -231,6 +564,9 @@ async function handleLogin(body, origin) {
   if (expected.length !== actual.length || !timingSafeEqual(expected, actual)) {
     return response(401, { message: "이메일 또는 비밀번호가 올바르지 않습니다." }, origin);
   }
+  if (item.emailVerified?.BOOL !== true) {
+    return response(403, { code: "EMAIL_NOT_VERIFIED", message: "이메일 인증 후 로그인할 수 있습니다." }, origin);
+  }
 
   const user = publicUser(item);
   return response(200, { user, session: signSession(user) }, origin);
@@ -238,18 +574,110 @@ async function handleLogin(body, origin) {
 
 async function handleReset(body, origin) {
   const email = normalizeEmail(body.email);
-  if (!validateEmail(email)) {
-    return response(400, { message: "올바른 이메일을 입력해 주세요." }, origin);
+  if (!validateEmail(email)) return response(400, { message: "올바른 이메일을 입력해 주세요." }, origin);
+
+  const item = await getUser(email);
+  let preview;
+  if (item) {
+    const challenge = createChallenge("passwordReset");
+    await updateUser(email, {
+      passwordResetTokenHash: s(challenge.tokenHash),
+      passwordResetCodeHash: s(challenge.codeHash),
+      passwordResetExpiresAt: s(challenge.expiresAt),
+      resetRequestedAt: s(new Date().toISOString()),
+      updatedAt: s(new Date().toISOString()),
+    });
+    const delivery = await sendPasswordResetEmail(email, challenge);
+    preview = delivery.preview;
   }
 
-  const now = new Date().toISOString();
+  return response(
+    200,
+    {
+      message: "가입된 계정이면 비밀번호 재설정 메일을 보냈습니다.",
+      emailPreview: preview,
+    },
+    origin,
+  );
+}
+
+async function handleResetConfirm(body, origin) {
+  const email = normalizeEmail(body.email);
+  const token = String(body.token || "").trim();
+  const code = String(body.code || "").trim();
+  const password = String(body.password || "");
+
+  if (!validateEmail(email) || (!token && !code)) {
+    return response(400, { message: "이메일과 재설정 코드가 필요합니다." }, origin);
+  }
+  if (password.length < 8 || password.length > 128) {
+    return response(400, { message: "비밀번호는 8~128자로 입력해 주세요." }, origin);
+  }
+
+  const item = await getUser(email);
+  if (!item || !challengeMatches(item, "passwordReset", token, code)) {
+    return response(400, { message: "재설정 코드가 만료되었거나 올바르지 않습니다." }, origin);
+  }
+
+  const salt = randomBytes(16).toString("base64");
+  const updated = await updateUser(
+    email,
+    {
+      passwordHash: s(hashPassword(password, salt)),
+      passwordSalt: s(salt),
+      passwordIterations: n(passwordIterations),
+      emailVerified: b(true),
+      updatedAt: s(new Date().toISOString()),
+    },
+    ["passwordResetTokenHash", "passwordResetCodeHash", "passwordResetExpiresAt", "resetRequestedAt"],
+  );
+  const user = publicUser(updated);
+  return response(200, { user, session: signSession(user), message: "비밀번호가 변경되었습니다." }, origin);
+}
+
+async function handleGoogle(body, origin) {
+  const credential = String(body.credential || "");
+  if (!credential) return response(400, { message: "Google 인증 정보가 필요합니다." }, origin);
+
+  let payload;
   try {
-    await markResetRequested(email, now);
+    payload = await verifyGoogleCredential(credential);
   } catch (error) {
-    if (error.name !== "ConditionalCheckFailedException") throw error;
+    return response(401, { message: "Google 인증을 확인하지 못했습니다." }, origin);
   }
 
-  return response(200, { message: "가입된 계정이면 비밀번호 재설정 요청이 기록됩니다." }, origin);
+  const email = normalizeEmail(payload.email);
+  const now = new Date().toISOString();
+  let item = await getUser(email);
+  if (!item) {
+    item = {
+      pk: s(userKey(email)),
+      email: s(email),
+      nickname: s(payload.name || email),
+      provider: s("google"),
+      googleSub: s(payload.sub),
+      picture: s(payload.picture || ""),
+      emailVerified: b(true),
+      createdAt: s(now),
+      updatedAt: s(now),
+    };
+    try {
+      await putUser(item);
+    } catch (error) {
+      if (error.name !== "ConditionalCheckFailedException") throw error;
+      item = await getUser(email);
+    }
+  }
+
+  const updated = await updateUser(email, {
+    provider: s("google"),
+    googleSub: s(payload.sub),
+    picture: s(payload.picture || ""),
+    emailVerified: b(true),
+    updatedAt: s(now),
+  });
+  const user = publicUser(updated, "google");
+  return response(200, { user, session: signSession(user) }, origin);
 }
 
 export async function handler(event) {
@@ -257,9 +685,7 @@ export async function handler(event) {
   const method = event.requestContext?.http?.method || event.httpMethod || "";
   const path = event.rawPath || event.path || "";
 
-  if (method === "OPTIONS") {
-    return response(204, {}, origin);
-  }
+  if (method === "OPTIONS") return response(204, {}, origin);
 
   if (!["dynamodb", "file"].includes(authStore)) {
     return response(500, { message: "Auth store is not supported." }, origin);
@@ -272,8 +698,14 @@ export async function handler(event) {
   try {
     const body = readBody(event);
     if (method === "POST" && path.endsWith("/auth/signup")) return await handleSignup(body, origin);
+    if (method === "POST" && path.endsWith("/auth/verify-email")) return await handleVerifyEmail(body, origin);
+    if (method === "POST" && path.endsWith("/auth/resend-verification")) {
+      return await handleResendVerification(body, origin);
+    }
     if (method === "POST" && path.endsWith("/auth/login")) return await handleLogin(body, origin);
+    if (method === "POST" && path.endsWith("/auth/reset/confirm")) return await handleResetConfirm(body, origin);
     if (method === "POST" && path.endsWith("/auth/reset")) return await handleReset(body, origin);
+    if (method === "POST" && path.endsWith("/auth/google")) return await handleGoogle(body, origin);
     return response(404, { message: "Not found." }, origin);
   } catch (error) {
     console.error(error);

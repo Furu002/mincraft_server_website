@@ -29,6 +29,11 @@ site. The deploy workflow writes the generated API endpoint to
 `.env.auth.generated` and exports it as `VITE_AUTH_API_BASE` for the Vite build,
 so the deployed site is built against the real signup/login API.
 
+The auth backend also sends email verification and password reset messages with
+Amazon SES. By default it uses `no-reply@nfoifsb.kr`; set `AUTH_EMAIL_FROM` to
+override it. The sender identity must be verified in SES before real users can
+receive mail.
+
 ## AWS Resources
 
 AWS setup is blocked by default so it cannot accidentally create billable
@@ -44,7 +49,7 @@ npm run auth:setup:aws
 
 - DynamoDB table for users
 - Lambda function for `signup`, `login`, and `reset`
-- IAM role with DynamoDB-only access for the user table
+- IAM role with DynamoDB user table access and SES email send access
 - HTTP API Gateway routes
 - Lambda `AUTH_PEPPER` stored in the encrypted Lambda environment
 
@@ -78,16 +83,37 @@ Response:
 
 ```json
 {
-  "user": {
-    "email": "player@example.com",
-    "name": "PlayerName",
-    "provider": "site",
-    "signedInAt": "2026-07-01T00:00:00.000Z"
-  },
-  "session": {
-    "token": "...",
-    "expiresAt": "2026-07-15T00:00:00.000Z"
-  }
+  "message": "인증 메일을 보냈습니다. 이메일 인증 후 로그인할 수 있습니다.",
+  "verificationRequired": true
+}
+```
+
+### Verify Email
+
+```http
+POST /auth/verify-email
+Content-Type: application/json
+```
+
+```json
+{
+  "email": "player@example.com",
+  "code": "123456"
+}
+```
+
+The `token` from an emailed link can be sent instead of `code`.
+
+### Resend Verification
+
+```http
+POST /auth/resend-verification
+Content-Type: application/json
+```
+
+```json
+{
+  "email": "player@example.com"
 }
 ```
 
@@ -119,3 +145,36 @@ Content-Type: application/json
 ```
 
 The reset endpoint returns a generic success response so it does not reveal whether an email exists.
+
+### Confirm Reset
+
+```http
+POST /auth/reset/confirm
+Content-Type: application/json
+```
+
+```json
+{
+  "email": "player@example.com",
+  "code": "123456",
+  "password": "new-minimum-8-characters"
+}
+```
+
+The `token` from an emailed reset link can be sent instead of `code`.
+
+### Google Login
+
+```http
+POST /auth/google
+Content-Type: application/json
+```
+
+```json
+{
+  "credential": "google-id-token"
+}
+```
+
+The Lambda verifies the Google ID token signature, issuer, audience, expiry, and
+verified email claim before issuing a site session.

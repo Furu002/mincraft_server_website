@@ -32,6 +32,9 @@ jobs:
       AUTH_STACK_NAME: ${{ secrets.AUTH_STACK_NAME || 'nfoifsb-auth' }}
       AUTH_ALLOWED_ORIGINS: ${{ secrets.AUTH_ALLOWED_ORIGINS }}
       AUTH_PEPPER: ${{ secrets.AUTH_PEPPER }}
+      AUTH_EMAIL_FROM: ${{ secrets.AUTH_EMAIL_FROM }}
+      AUTH_APP_BASE_URL: ${{ secrets.AUTH_APP_BASE_URL }}
+      GOOGLE_CLIENT_ID: ${{ secrets.GOOGLE_CLIENT_ID || secrets.VITE_GOOGLE_CLIENT_ID }}
       VITE_GOOGLE_CLIENT_ID: ${{ secrets.VITE_GOOGLE_CLIENT_ID }}
       VITE_AUTH_API_BASE: ${{ secrets.VITE_AUTH_API_BASE }}
       VITE_PLAYER_API_BASE: ${{ secrets.VITE_PLAYER_API_BASE }}

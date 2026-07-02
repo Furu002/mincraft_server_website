@@ -6,14 +6,14 @@ const AUTH_AUTO_KEY = "nfoifsb.autoLogin";
 const PLAYER_PROFILES_KEY = "nfoifsb.playerProfiles";
 const PLAYER_INVENTORY_CACHE_KEY = "nfoifsb.playerInventoryCache";
 const GOOGLE_SCRIPT_SRC = "https://accounts.google.com/gsi/client";
+
 const googleClientId = import.meta.env.VITE_GOOGLE_CLIENT_ID || "";
 const playerApiBase = (import.meta.env.VITE_PLAYER_API_BASE || "").replace(/\/$/, "");
 const isLocalHost = ["localhost", "127.0.0.1", "::1"].includes(window.location.hostname);
 const localAuthApiBase = isLocalHost ? "http://127.0.0.1:4174" : "";
 const authApiBase = (import.meta.env.VITE_AUTH_API_BASE || localAuthApiBase).replace(/\/$/, "");
-const allowLocalPlayerPreview =
-  !playerApiBase && isLocalHost;
 const allowLocalAuthPreview = !authApiBase && isLocalHost;
+const allowLocalPlayerPreview = !playerApiBase && isLocalHost;
 
 const title = document.querySelector("[data-auth-title]");
 const copy = document.querySelector("[data-auth-copy]");
@@ -27,7 +27,10 @@ const signoutButton = document.querySelector("[data-signout]");
 const autoLoginButton = document.querySelector("[data-auto-login]");
 const loginForm = document.querySelector("[data-login-form]");
 const signupForm = document.querySelector("[data-signup-form]");
+const verifyForm = document.querySelector("[data-verify-form]");
 const resetForm = document.querySelector("[data-reset-form]");
+const resetConfirmForm = document.querySelector("[data-reset-confirm-form]");
+const resendVerificationButton = document.querySelector("[data-resend-verification]");
 const authViews = document.querySelectorAll("[data-auth-view]");
 const authSecondaryActions = document.querySelector(".auth-secondary-actions");
 const authDivider = document.querySelector(".auth-divider");
@@ -65,22 +68,7 @@ function setMessage(text, tone = "info") {
 function setGoogleMessage(text, tone = "info") {
   googleMessage = text;
   googleMessageTone = tone;
-
-  if (loginForm && !loginForm.hidden) {
-    setMessage(text, tone);
-  }
-}
-
-function renderSignedInControls(isSignedIn) {
-  if (isSignedIn) {
-    authViews.forEach((view) => {
-      view.hidden = true;
-    });
-  }
-
-  if (authSecondaryActions) authSecondaryActions.hidden = isSignedIn;
-  if (authDivider) authDivider.hidden = isSignedIn;
-  if (googleLoginSlot) googleLoginSlot.hidden = isSignedIn;
+  if (loginForm && !loginForm.hidden) setMessage(text, tone);
 }
 
 function readAutoLogin() {
@@ -88,31 +76,6 @@ function readAutoLogin() {
     return localStorage.getItem(AUTH_AUTO_KEY) === "1";
   } catch {
     return false;
-  }
-}
-
-function setAutoLogin(enabled) {
-  try {
-    localStorage.setItem(AUTH_AUTO_KEY, enabled ? "1" : "0");
-  } catch {
-    // The toggle still works visually when storage is unavailable.
-  }
-
-  renderAutoLogin();
-
-  const user = readStoredUser();
-  if (!user) return;
-
-  if (enabled) {
-    persistUser(user);
-  } else {
-    try {
-      localStorage.removeItem(AUTH_STORAGE_KEY);
-      sessionStorage.setItem(AUTH_STORAGE_KEY, JSON.stringify(user));
-    } catch {
-      // Keep the current visible session even if storage is unavailable.
-    }
-    publishAuthEvent("login", user);
   }
 }
 
@@ -125,9 +88,7 @@ function renderAutoLogin() {
 
 function readStoredUser() {
   try {
-    const sessionUser = sessionStorage.getItem(AUTH_STORAGE_KEY);
-    const storedUser = localStorage.getItem(AUTH_STORAGE_KEY);
-    const raw = sessionUser || storedUser;
+    const raw = sessionStorage.getItem(AUTH_STORAGE_KEY) || localStorage.getItem(AUTH_STORAGE_KEY);
     return raw ? JSON.parse(raw) : null;
   } catch {
     return null;
@@ -141,18 +102,12 @@ function publishAuthEvent(type, user = null) {
     user,
     timestamp: Date.now(),
   };
-
   try {
     localStorage.setItem(AUTH_EVENT_KEY, JSON.stringify(payload));
-  } catch {
-    // Parent window messaging below is enough for the current click flow.
-  }
-
+  } catch {}
   try {
     window.opener?.postMessage(payload, window.location.origin);
-  } catch {
-    // The login window still works when opened without an opener.
-  }
+  } catch {}
 }
 
 function persistUser(user) {
@@ -165,9 +120,7 @@ function persistUser(user) {
       localStorage.removeItem(AUTH_STORAGE_KEY);
       sessionStorage.setItem(AUTH_STORAGE_KEY, serialized);
     }
-  } catch {
-    // The UI still reports the signed-in state for this page.
-  }
+  } catch {}
 
   publishAuthEvent("login", user);
   renderCharacterPanel(user);
@@ -178,12 +131,21 @@ function clearUser() {
     localStorage.removeItem(AUTH_STORAGE_KEY);
     sessionStorage.removeItem(AUTH_STORAGE_KEY);
     localStorage.removeItem("nfoifsb.nickname");
-  } catch {
-    // Sign-out still updates the visible page.
-  }
+  } catch {}
 
   window.google?.accounts?.id?.disableAutoSelect();
   publishAuthEvent("logout");
+}
+
+function renderSignedInControls(isSignedIn) {
+  if (isSignedIn) {
+    authViews.forEach((view) => {
+      view.hidden = true;
+    });
+  }
+  if (authSecondaryActions) authSecondaryActions.hidden = isSignedIn;
+  if (authDivider) authDivider.hidden = isSignedIn;
+  if (googleLoginSlot) googleLoginSlot.hidden = isSignedIn;
 }
 
 function renderAuthState(user = readStoredUser()) {
@@ -224,7 +186,9 @@ function setMode(mode) {
   const views = {
     login: loginForm,
     signup: signupForm,
+    verify: verifyForm,
     reset: resetForm,
+    resetConfirm: resetConfirmForm,
   };
 
   Object.entries(views).forEach(([viewMode, form]) => {
@@ -232,20 +196,21 @@ function setMode(mode) {
   });
 
   modeButtons.forEach((button) => {
-    const buttonMode = button.dataset.modeButton;
-    button.hidden =
-      (mode === "login" && buttonMode === "login") ||
-      (mode !== "login" && buttonMode !== "login");
+    const target = button.dataset.modeButton;
+    button.hidden = mode === "login" ? target === "login" : target !== "login";
   });
 
   const headingByMode = {
     login: ["로그인", "서버 웹사이트에서 사용할 계정으로 로그인하세요."],
-    signup: ["회원가입", "새 계정을 만들고 바로 로그인하세요."],
-    reset: ["비밀번호 찾기", "가입한 이메일로 재설정 요청을 준비하세요."],
+    signup: ["회원가입", "메일 인증까지 완료하면 서버 계정을 사용할 수 있습니다."],
+    verify: ["이메일 인증", "메일로 받은 6자리 코드나 인증 링크 토큰을 입력하세요."],
+    reset: ["비밀번호 찾기", "가입한 이메일로 재설정 코드를 보내드립니다."],
+    resetConfirm: ["새 비밀번호", "메일로 받은 코드와 새 비밀번호를 입력하세요."],
   };
   const [nextTitle, nextCopy] = headingByMode[mode] || headingByMode.login;
   if (title) title.textContent = nextTitle;
   if (copy) copy.textContent = nextCopy;
+
   if (mode === "login") setMessage(googleMessage, googleMessageTone);
   else setMessage("입력 후 버튼을 눌러 주세요.");
 }
@@ -256,6 +221,7 @@ function createLocalUser({ email, name, provider }) {
     name: name || email,
     picture: "",
     provider,
+    emailVerified: true,
     signedInAt: new Date().toISOString(),
   };
 }
@@ -267,6 +233,8 @@ function authUserFromResponse(payload) {
     name: user.name || user.email || "로그인 사용자",
     picture: user.picture || "",
     provider: user.provider || "site",
+    sub: user.sub || "",
+    emailVerified: user.emailVerified === true,
     signedInAt: user.signedInAt || new Date().toISOString(),
     sessionToken: payload?.session?.token || "",
     sessionExpiresAt: payload?.session?.expiresAt || "",
@@ -274,9 +242,7 @@ function authUserFromResponse(payload) {
 }
 
 async function postAuth(path, body) {
-  if (!authApiBase) {
-    throw new Error("회원가입 API가 아직 연결되지 않았습니다.");
-  }
+  if (!authApiBase) throw new Error("회원가입 API가 아직 연결되지 않았습니다.");
 
   let response;
   try {
@@ -295,22 +261,37 @@ async function postAuth(path, body) {
   }
 
   const payload = await response.json().catch(() => ({}));
-  if (!response.ok) {
-    throw new Error(payload?.message || "요청을 처리하지 못했습니다.");
-  }
+  if (!response.ok) throw new Error(payload?.message || "요청을 처리하지 못했습니다.");
   return payload;
 }
 
 function clearPasswordFields(form) {
-  form
-    ?.querySelectorAll('input[type="password"]')
-    .forEach((input) => {
-      input.value = "";
-    });
+  form?.querySelectorAll('input[type="password"]').forEach((input) => {
+    input.value = "";
+  });
 }
 
-function getUserKey(user) {
-  return String(user?.sub || user?.email || user?.name || "local-player").toLowerCase();
+function setFormEmail(form, email) {
+  const input = form?.elements?.email;
+  if (input && email) input.value = email;
+}
+
+function setFormCode(form, code) {
+  const input = form?.elements?.code;
+  if (input && code) input.value = code;
+}
+
+function previewMessage(payload, fallback) {
+  const preview = payload?.emailPreview;
+  if (preview?.code) return `${fallback} 개발용 코드: ${preview.code}`;
+  return fallback;
+}
+
+function signInFromPayload(payload, successMessage) {
+  const user = authUserFromResponse(payload);
+  persistUser(user);
+  renderAuthState(user);
+  setMessage(successMessage, "success");
 }
 
 function readJsonStorage(key, fallback) {
@@ -325,9 +306,11 @@ function readJsonStorage(key, fallback) {
 function writeJsonStorage(key, value) {
   try {
     localStorage.setItem(key, JSON.stringify(value));
-  } catch {
-    // The current page can still render the state without persistence.
-  }
+  } catch {}
+}
+
+function getUserKey(user) {
+  return String(user?.sub || user?.email || user?.name || "local-player").toLowerCase();
 }
 
 function readPlayerProfiles() {
@@ -335,13 +318,12 @@ function readPlayerProfiles() {
 }
 
 function readPlayerProfile(user = readStoredUser()) {
-  const profiles = readPlayerProfiles();
-  return profiles[getUserKey(user)] || null;
+  return readPlayerProfiles()[getUserKey(user)] || null;
 }
 
-function writePlayerProfile(profile, user = readStoredUser()) {
+function writePlayerProfile(playerProfile, user = readStoredUser()) {
   const profiles = readPlayerProfiles();
-  profiles[getUserKey(user)] = profile;
+  profiles[getUserKey(user)] = playerProfile;
   writeJsonStorage(PLAYER_PROFILES_KEY, profiles);
 }
 
@@ -349,10 +331,10 @@ function readInventoryCache() {
   return readJsonStorage(PLAYER_INVENTORY_CACHE_KEY, {});
 }
 
-function writeInventoryCache(profile, payload, user = readStoredUser()) {
+function writeInventoryCache(playerProfile, payload, user = readStoredUser()) {
   const cache = readInventoryCache();
   cache[getUserKey(user)] = {
-    nickname: profile.nickname,
+    nickname: playerProfile.nickname,
     payload,
     timestamp: Date.now(),
   };
@@ -364,10 +346,9 @@ function getCachedInventory(user = readStoredUser()) {
 }
 
 function generateVerificationCode() {
-  const cryptoValues = new Uint32Array(1);
-  window.crypto?.getRandomValues?.(cryptoValues);
-  const value = cryptoValues[0] || Math.floor(Math.random() * 900000);
-  return String((value % 900000) + 100000);
+  const value = new Uint32Array(1);
+  window.crypto?.getRandomValues?.(value);
+  return String(((value[0] || Math.floor(Math.random() * 900000)) % 900000) + 100000);
 }
 
 function getVerifyCommand(code) {
@@ -394,21 +375,21 @@ function setWebActionMessage(text, tone = "info") {
   webActionMessage.classList.toggle("is-success", tone === "success");
 }
 
-function renderWebActions(profile = readPlayerProfile()) {
-  const canUseActions = Boolean(profile?.verified && profile?.webToken);
+function renderWebActions(playerProfile = readPlayerProfile()) {
+  const canUseActions = Boolean(playerProfile?.verified && playerProfile?.webToken);
   playerActionButtons.forEach((button) => {
     button.disabled = !canUseActions;
   });
   if (webActionSummary) {
     webActionSummary.textContent = canUseActions
       ? "서버 연결 준비됨"
-      : profile?.verified
+      : playerProfile?.verified
         ? "토큰 재확인 필요"
         : "인증 후 사용";
   }
-  if (!profile?.verified) {
+  if (!playerProfile?.verified) {
     setWebActionMessage("캐릭터 인증 후 웹사이트 버튼으로 서버에 액션을 보낼 수 있습니다.");
-  } else if (!profile?.webToken) {
+  } else if (!playerProfile?.webToken) {
     setWebActionMessage("인증 확인 버튼을 눌러 웹 액션 토큰을 받아오세요.", "error");
   }
 }
@@ -417,15 +398,6 @@ function getInventoryItems(payload) {
   if (Array.isArray(payload?.items)) return payload.items;
   if (Array.isArray(payload?.inventory)) return payload.inventory;
   return [];
-}
-
-function normalizeSlotItem(item, index) {
-  return {
-    slot: Number.isFinite(item?.slot) ? item.slot : index,
-    name: String(item?.name || item?.type || "알 수 없는 아이템"),
-    count: Math.max(1, Number(item?.count || item?.amount || 1)),
-    color: item?.color || getItemColor(String(item?.name || item?.type || "")),
-  };
 }
 
 function getItemColor(name) {
@@ -441,29 +413,33 @@ function getItemColor(name) {
   return "#83b36a";
 }
 
-function buildFallbackInventory(profile) {
-  const seed = Array.from(profile.nickname || "player").reduce(
-    (sum, char) => sum + char.charCodeAt(0),
-    0,
-  );
-  const baseItems = [
-    { slot: 0, name: "다이아몬드 검", count: 1, color: "#55d9e8" },
-    { slot: 1, name: "철 곡괭이", count: 1, color: "#c9d0d5" },
-    { slot: 2, name: "횃불", count: 32 + (seed % 24), color: "#f5c84b" },
-    { slot: 3, name: "구운 돼지고기", count: 12 + (seed % 8), color: "#d68a54" },
-    { slot: 4, name: "참나무 원목", count: 24 + (seed % 32), color: "#9a6439" },
-    { slot: 9, name: "방패", count: 1, color: "#8f9693" },
-    { slot: 10, name: "물 양동이", count: 1, color: "#4da3ff" },
-    { slot: 11, name: "에메랄드", count: 3 + (seed % 9), color: "#31c96b" },
-    { slot: 18, name: "엔더 진주", count: 2 + (seed % 4), color: "#46a082" },
-    { slot: 27, name: "황금 사과", count: 1, color: "#f5c84b" },
-  ];
+function normalizeSlotItem(item, index) {
+  return {
+    slot: Number.isFinite(item?.slot) ? item.slot : index,
+    name: String(item?.name || item?.type || "알 수 없는 아이템"),
+    count: Math.max(1, Number(item?.count || item?.amount || 1)),
+    color: item?.color || getItemColor(String(item?.name || item?.type || "")),
+  };
+}
 
+function buildFallbackInventory(playerProfile) {
+  const seed = Array.from(playerProfile.nickname || "player").reduce((sum, char) => sum + char.charCodeAt(0), 0);
   return {
     level: 12 + (seed % 28),
     health: `${16 + (seed % 5)} / 20`,
     location: `${100 + (seed % 420)}, ${62 + (seed % 8)}, ${-180 - (seed % 360)}`,
-    items: baseItems,
+    items: [
+      { slot: 0, name: "다이아몬드 검", count: 1, color: "#55d9e8" },
+      { slot: 1, name: "철 곡괭이", count: 1, color: "#c9d0d5" },
+      { slot: 2, name: "횃불", count: 32 + (seed % 24), color: "#f5c84b" },
+      { slot: 3, name: "구운 돼지고기", count: 12 + (seed % 8), color: "#d68a54" },
+      { slot: 4, name: "참나무 원목", count: 24 + (seed % 32), color: "#9a6439" },
+      { slot: 9, name: "방패", count: 1, color: "#8f9693" },
+      { slot: 10, name: "물 양동이", count: 1, color: "#4da3ff" },
+      { slot: 11, name: "에메랄드", count: 3 + (seed % 9), color: "#31c96b" },
+      { slot: 18, name: "엔더 진주", count: 2 + (seed % 4), color: "#46a082" },
+      { slot: 27, name: "황금 사과", count: 1, color: "#f5c84b" },
+    ],
     updatedAt: new Date().toISOString(),
     source: "local-preview",
   };
@@ -471,8 +447,7 @@ function buildFallbackInventory(profile) {
 
 function renderInventory(payload = null) {
   if (!inventoryGrid) return;
-
-  const profile = readPlayerProfile();
+  const playerProfile = readPlayerProfile();
   const items = getInventoryItems(payload).map(normalizeSlotItem);
   const bySlot = new Map(items.map((item) => [item.slot, item]));
   inventoryGrid.replaceChildren();
@@ -503,20 +478,15 @@ function renderInventory(payload = null) {
   }
 
   const updatedAt = payload?.updatedAt ? new Date(payload.updatedAt) : new Date();
-  const updatedLabel = new Intl.DateTimeFormat("ko-KR", {
-    hour: "2-digit",
-    minute: "2-digit",
-  }).format(updatedAt);
+  const updatedLabel = new Intl.DateTimeFormat("ko-KR", { hour: "2-digit", minute: "2-digit" }).format(updatedAt);
 
   if (inventorySummary) {
-    inventorySummary.textContent = profile?.verified
-      ? `${items.length}개 슬롯 · ${updatedLabel}`
-      : "인증 후 표시";
+    inventorySummary.textContent = playerProfile?.verified ? `${items.length}개 슬롯 · ${updatedLabel}` : "인증 후 표시";
   }
   if (inventoryEmpty) {
-    inventoryEmpty.textContent = profile?.verified
+    inventoryEmpty.textContent = playerProfile?.verified
       ? items.length
-        ? `${profile.nickname} 인벤토리 동기화 완료`
+        ? `${playerProfile.nickname} 인벤토리 동기화 완료`
         : "비어 있는 인벤토리입니다."
       : "캐릭터 인증 후 표시됩니다.";
   }
@@ -527,7 +497,6 @@ function renderInventory(payload = null) {
 
 async function fetchPlayerJson(path, options = {}) {
   if (!playerApiBase) return null;
-
   const controller = new AbortController();
   const timer = window.setTimeout(() => controller.abort(), 6000);
   try {
@@ -543,52 +512,6 @@ async function fetchPlayerJson(path, options = {}) {
     return await response.json();
   } finally {
     window.clearTimeout(timer);
-  }
-}
-
-async function postPlayerAction(action) {
-  const user = readStoredUser();
-  const profile = readPlayerProfile(user);
-  if (!profile?.verified) {
-    setWebActionMessage("먼저 캐릭터 인증을 완료해 주세요.", "error");
-    return;
-  }
-
-  if (!profile.webToken) {
-    setWebActionMessage("인증 확인을 다시 눌러 웹 액션 토큰을 받아오세요.", "error");
-    return;
-  }
-
-  if (!playerApiBase) {
-    if (allowLocalPlayerPreview) {
-      setWebActionMessage("로컬 미리보기에서는 버튼 모양만 확인됩니다. 실제 서버 API를 연결해 주세요.");
-      return;
-    }
-    setWebActionMessage("VITE_PLAYER_API_BASE가 아직 연결되지 않았습니다.", "error");
-    return;
-  }
-
-  playerActionButtons.forEach((button) => {
-    button.disabled = true;
-  });
-  setWebActionMessage("서버로 액션을 보내는 중...");
-
-  try {
-    const payload = await fetchPlayerJson(
-      `/players/${encodeURIComponent(profile.nickname)}/actions/${encodeURIComponent(action)}`,
-      {
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${profile.webToken}`,
-        },
-        body: JSON.stringify({ webToken: profile.webToken }),
-      },
-    );
-    setWebActionMessage(payload?.message || "서버 액션을 보냈습니다.", "success");
-  } catch (error) {
-    setWebActionMessage(error?.message || "서버 액션을 보내지 못했습니다.", "error");
-  } finally {
-    renderWebActions(profile);
   }
 }
 
@@ -617,12 +540,12 @@ async function requestPlayerVerification(nickname, user) {
   };
 }
 
-async function checkPlayerVerification(profile, user) {
+async function checkPlayerVerification(playerProfile, user) {
   const apiPayload = await fetchPlayerJson("/verification/check", {
     method: "POST",
     body: JSON.stringify({
-      nickname: profile.nickname,
-      code: profile.code,
+      nickname: playerProfile.nickname,
+      code: playerProfile.code,
       account: {
         email: user?.email || "",
         provider: user?.provider || "site",
@@ -632,48 +555,44 @@ async function checkPlayerVerification(profile, user) {
   }).catch(() => null);
 
   return {
-    ...profile,
-    uuid: apiPayload?.uuid || profile.uuid || "",
-    webToken: apiPayload?.webToken || profile.webToken || "",
+    ...playerProfile,
+    uuid: apiPayload?.uuid || playerProfile.uuid || "",
+    webToken: apiPayload?.webToken || playerProfile.webToken || "",
     verified: playerApiBase ? Boolean(apiPayload?.verified) : allowLocalPlayerPreview,
-    verifiedAt:
-      apiPayload?.verified || allowLocalPlayerPreview ? new Date().toISOString() : profile.verifiedAt,
+    verifiedAt: apiPayload?.verified || allowLocalPlayerPreview ? new Date().toISOString() : playerProfile.verifiedAt,
   };
 }
 
-async function loadPlayerInventory(profile, user = readStoredUser()) {
-  if (!profile?.verified) {
+async function loadPlayerInventory(playerProfile, user = readStoredUser()) {
+  if (!playerProfile?.verified) {
     renderInventory(null);
     return;
   }
 
   setInventoryLoading(true);
   try {
-    const apiPayload = await fetchPlayerJson(
-      `/players/${encodeURIComponent(profile.nickname)}/inventory`,
-      { method: "GET" },
-    ).catch(() => null);
-    const payload = apiPayload || (allowLocalPlayerPreview ? buildFallbackInventory(profile) : null);
+    const apiPayload = await fetchPlayerJson(`/players/${encodeURIComponent(playerProfile.nickname)}/inventory`, {
+      method: "GET",
+    }).catch(() => null);
+    const payload = apiPayload || (allowLocalPlayerPreview ? buildFallbackInventory(playerProfile) : null);
     if (!payload) {
       setCharacterStatus("API 연결 필요", "error");
       renderInventory(null);
       return;
     }
-    writeInventoryCache(profile, payload, user);
+    writeInventoryCache(playerProfile, payload, user);
     renderInventory(payload);
   } finally {
     setInventoryLoading(false);
   }
 }
 
-function renderVerifyCard(profile) {
+function renderVerifyCard(playerProfile) {
   if (!verifyCard) return;
-
-  verifyCard.hidden = !profile;
-  if (!profile) return;
-
-  const command = getVerifyCommand(profile.code);
-  if (verifyCode) verifyCode.textContent = profile.code;
+  verifyCard.hidden = !playerProfile;
+  if (!playerProfile) return;
+  const command = getVerifyCommand(playerProfile.code);
+  if (verifyCode) verifyCode.textContent = playerProfile.code;
   if (verifyCommand) verifyCommand.textContent = command;
 }
 
@@ -690,28 +609,23 @@ function renderCharacterPanel(user = readStoredUser()) {
   }
 
   characterPanel.hidden = false;
-  const profile = readPlayerProfile(user);
+  const playerProfile = readPlayerProfile(user);
   const nicknameInput = characterForm?.elements?.nickname;
+  if (nicknameInput && playerProfile?.nickname) nicknameInput.value = playerProfile.nickname;
 
-  if (nicknameInput && profile?.nickname) {
-    nicknameInput.value = profile.nickname;
-  }
-
-  renderVerifyCard(profile);
-  setCharacterStatus(profile?.verified ? "인증 완료" : profile ? "인증 확인 필요" : "인증 대기", profile?.verified ? "success" : "idle");
-  if (refreshInventoryButton) refreshInventoryButton.disabled = !profile?.verified;
-  renderWebActions(profile);
+  renderVerifyCard(playerProfile);
+  setCharacterStatus(
+    playerProfile?.verified ? "인증 완료" : playerProfile ? "인증 확인 필요" : "인증 대기",
+    playerProfile?.verified ? "success" : "idle",
+  );
+  if (refreshInventoryButton) refreshInventoryButton.disabled = !playerProfile?.verified;
+  renderWebActions(playerProfile);
 
   const cached = getCachedInventory(user);
-  if (cached?.payload && cached.nickname === profile?.nickname) {
-    renderInventory(cached.payload);
-  } else {
-    renderInventory(null);
-  }
+  if (cached?.payload && cached.nickname === playerProfile?.nickname) renderInventory(cached.payload);
+  else renderInventory(null);
 
-  if (profile?.verified) {
-    loadPlayerInventory(profile, user);
-  }
+  if (playerProfile?.verified) loadPlayerInventory(playerProfile, user);
 }
 
 async function copyText(text) {
@@ -720,9 +634,7 @@ async function copyText(text) {
       await navigator.clipboard.writeText(text);
       return true;
     }
-  } catch {
-    // Use the fallback below.
-  }
+  } catch {}
 
   try {
     const textarea = document.createElement("textarea");
@@ -738,31 +650,6 @@ async function copyText(text) {
   } catch {
     return false;
   }
-}
-
-function decodeJwtPayload(token) {
-  const payload = token.split(".")[1];
-  if (!payload) throw new Error("Missing Google credential payload.");
-
-  const base64 = payload.replace(/-/g, "+").replace(/_/g, "/");
-  const padded = base64.padEnd(base64.length + ((4 - (base64.length % 4)) % 4), "=");
-  const bytes = Uint8Array.from(atob(padded), (char) => char.charCodeAt(0));
-  return JSON.parse(new TextDecoder().decode(bytes));
-}
-
-function getGoogleUserFromCredential(credential) {
-  const payload = decodeJwtPayload(credential);
-  if (payload.aud !== googleClientId) throw new Error("Google credential audience mismatch.");
-  if (Number(payload.exp) * 1000 < Date.now()) throw new Error("Google credential expired.");
-
-  return {
-    email: payload.email || "",
-    name: payload.name || payload.email || "Google 사용자",
-    picture: payload.picture || "",
-    provider: "google",
-    sub: payload.sub || "",
-    signedInAt: new Date().toISOString(),
-  };
 }
 
 function renderGoogleFallback(label) {
@@ -788,9 +675,7 @@ function loadGoogleIdentityScript() {
     script.onerror = () => reject(new Error("Google Identity Services script failed to load."));
     document.head.appendChild(script);
   }).then(() => {
-    if (!window.google?.accounts?.id) {
-      throw new Error("Google Identity Services is unavailable.");
-    }
+    if (!window.google?.accounts?.id) throw new Error("Google Identity Services is unavailable.");
   });
 
   return googleScriptPromise;
@@ -802,14 +687,16 @@ function renderGoogleButton() {
   googleLoginSlot.replaceChildren();
   window.google.accounts.id.initialize({
     client_id: googleClientId,
-    callback: (response) => {
+    callback: async (response) => {
       try {
-        const user = getGoogleUserFromCredential(response.credential);
+        if (!authApiBase) throw new Error("Google 인증 API가 연결되지 않았습니다.");
+        const payload = await postAuth("/auth/google", { credential: response.credential });
+        const user = authUserFromResponse(payload);
         persistUser(user);
         renderAuthState(user);
         setMessage(`${user.name || user.email} 계정으로 로그인했습니다.`, "success");
-      } catch {
-        setMessage("Google 로그인 정보를 확인하지 못했습니다. 다시 시도해 주세요.", "error");
+      } catch (error) {
+        setMessage(error.message || "Google 인증을 확인하지 못했습니다.", "error");
       }
     },
     auto_select: readAutoLogin(),
@@ -847,85 +734,89 @@ function initGoogleLogin() {
     });
 }
 
+async function postPlayerAction(action) {
+  const user = readStoredUser();
+  const playerProfile = readPlayerProfile(user);
+  if (!playerProfile?.verified) {
+    setWebActionMessage("먼저 캐릭터 인증을 완료해 주세요.", "error");
+    return;
+  }
+  if (!playerProfile.webToken) {
+    setWebActionMessage("인증 확인을 다시 눌러 웹 액션 토큰을 받아오세요.", "error");
+    return;
+  }
+  if (!playerApiBase) {
+    if (allowLocalPlayerPreview) {
+      setWebActionMessage("로컬 미리보기에서는 버튼 모양만 확인됩니다. 실제 서버 API를 연결해 주세요.");
+      return;
+    }
+    setWebActionMessage("VITE_PLAYER_API_BASE가 아직 연결되지 않았습니다.", "error");
+    return;
+  }
+
+  playerActionButtons.forEach((button) => {
+    button.disabled = true;
+  });
+  setWebActionMessage("서버로 액션을 보내는 중...");
+
+  try {
+    const payload = await fetchPlayerJson(
+      `/players/${encodeURIComponent(playerProfile.nickname)}/actions/${encodeURIComponent(action)}`,
+      {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${playerProfile.webToken}`,
+        },
+        body: JSON.stringify({ webToken: playerProfile.webToken }),
+      },
+    );
+    setWebActionMessage(payload?.message || "서버 액션을 보냈습니다.", "success");
+  } catch (error) {
+    setWebActionMessage(error?.message || "서버 액션을 보내지 못했습니다.", "error");
+  } finally {
+    renderWebActions(playerProfile);
+  }
+}
+
+async function applyUrlAuthMode() {
+  const params = new URLSearchParams(window.location.search);
+  const mode = params.get("mode");
+  const email = params.get("email") || "";
+  const token = params.get("token") || "";
+  if (!mode) return;
+
+  if (mode === "verify") {
+    setMode("verify");
+    setFormEmail(verifyForm, email);
+    setFormCode(verifyForm, token);
+    if (email && token && authApiBase) {
+      setMessage("이메일 인증을 확인하는 중입니다.");
+      try {
+        const payload = await postAuth("/auth/verify-email", { email, token, code: token });
+        signInFromPayload(payload, "이메일 인증이 완료되었습니다.");
+        window.history.replaceState({}, "", "/login.html");
+      } catch (error) {
+        setMessage(error.message || "이메일 인증에 실패했습니다.", "error");
+      }
+    }
+    return;
+  }
+
+  if (mode === "reset-confirm") {
+    setMode("resetConfirm");
+    setFormEmail(resetConfirmForm, email);
+    setFormCode(resetConfirmForm, token);
+    setMessage("새 비밀번호를 입력해 주세요.");
+  }
+}
+
 autoLoginButton?.addEventListener("click", () => {
   const nextEnabled = !readAutoLogin();
-  setAutoLogin(nextEnabled);
+  try {
+    localStorage.setItem(AUTH_AUTO_KEY, nextEnabled ? "1" : "0");
+  } catch {}
+  renderAutoLogin();
   setMessage(nextEnabled ? "자동 로그인이 켜졌습니다." : "자동 로그인이 꺼졌습니다.");
-});
-
-characterForm?.addEventListener("submit", async (event) => {
-  event.preventDefault();
-  const user = readStoredUser();
-  if (!user) {
-    setMessage("먼저 로그인해 주세요.", "error");
-    return;
-  }
-
-  const formData = new FormData(characterForm);
-  const nickname = String(formData.get("nickname") || "").trim();
-  if (!nickname) {
-    setCharacterStatus("닉네임 필요", "error");
-    return;
-  }
-
-  setCharacterStatus("코드 생성 중");
-  const profile = await requestPlayerVerification(nickname, user);
-  writePlayerProfile(profile, user);
-  renderVerifyCard(profile);
-  renderInventory(null);
-  renderWebActions(profile);
-  setCharacterStatus(profile.verified ? "인증 완료" : "인증 확인 필요", profile.verified ? "success" : "idle");
-  if (refreshInventoryButton) refreshInventoryButton.disabled = !profile.verified;
-  if (profile.verified) loadPlayerInventory(profile, user);
-  setMessage(`${nickname} 캐릭터 인증 코드를 만들었습니다.`, "success");
-});
-
-checkCharacterButton?.addEventListener("click", async () => {
-  const user = readStoredUser();
-  const profile = readPlayerProfile(user);
-  if (!user || !profile) {
-    setCharacterStatus("인증 대기", "error");
-    return;
-  }
-
-  setCharacterStatus("인증 확인 중");
-  const nextProfile = await checkPlayerVerification(profile, user);
-  writePlayerProfile(nextProfile, user);
-  renderVerifyCard(nextProfile);
-  renderWebActions(nextProfile);
-  setCharacterStatus(
-    nextProfile.verified ? "인증 완료" : "아직 미인증",
-    nextProfile.verified ? "success" : "error",
-  );
-  if (refreshInventoryButton) refreshInventoryButton.disabled = !nextProfile.verified;
-
-  if (nextProfile.verified) {
-    await loadPlayerInventory(nextProfile, user);
-    setMessage(`${nextProfile.nickname} 캐릭터가 인증되었습니다.`, "success");
-  } else {
-    setMessage("서버에서 아직 캐릭터 인증을 확인하지 못했습니다.", "error");
-  }
-});
-
-copyVerifyCommandButton?.addEventListener("click", async () => {
-  const profile = readPlayerProfile();
-  if (!profile?.code) return;
-
-  const copied = await copyText(getVerifyCommand(profile.code));
-  setMessage(copied ? "인증 명령어를 복사했습니다." : "명령어 복사에 실패했습니다.", copied ? "success" : "error");
-});
-
-refreshInventoryButton?.addEventListener("click", () => {
-  const user = readStoredUser();
-  const profile = readPlayerProfile(user);
-  if (profile?.verified) loadPlayerInventory(profile, user);
-});
-
-playerActionButtons.forEach((button) => {
-  button.addEventListener("click", () => {
-    const action = button.dataset.playerAction;
-    if (action) postPlayerAction(action);
-  });
 });
 
 modeButtons.forEach((button) => {
@@ -962,6 +853,10 @@ loginForm?.addEventListener("submit", async (event) => {
     clearPasswordFields(loginForm);
     setMessage("로그인되었습니다.", "success");
   } catch (error) {
+    if (String(error.message || "").includes("이메일 인증")) {
+      setMode("verify");
+      setFormEmail(verifyForm, email);
+    }
     setMessage(error.message || "로그인하지 못했습니다.", "error");
   }
 });
@@ -977,31 +872,68 @@ signupForm?.addEventListener("submit", async (event) => {
     setMessage("닉네임, 이메일, 비밀번호를 모두 입력해 주세요.", "error");
     return;
   }
-
   if (password.length < 8) {
     setMessage("비밀번호는 8자 이상으로 입력해 주세요.", "error");
     return;
   }
 
   try {
-    const user = authApiBase
-      ? authUserFromResponse(await postAuth("/auth/signup", { nickname, email, password }))
-      : allowLocalAuthPreview
-        ? createLocalUser({ email, name: nickname, provider: "site-preview" })
-        : null;
-
-    if (!user) {
-      setMessage("회원가입 API 설정이 필요합니다. VITE_AUTH_API_BASE를 연결해 주세요.", "error");
+    if (authApiBase) {
+      const payload = await postAuth("/auth/signup", { nickname, email, password });
+      signupForm.reset();
+      setMode("verify");
+      setFormEmail(verifyForm, email);
+      setMessage(previewMessage(payload, "인증 메일을 보냈습니다. 메일함에서 코드를 확인해 주세요."), "success");
       return;
     }
 
-    persistUser(user);
-    signupForm.reset();
-    setMode("login");
-    renderAuthState(user);
-    setMessage("회원가입 후 로그인되었습니다.", "success");
+    if (allowLocalAuthPreview) {
+      const user = createLocalUser({ email, name: nickname, provider: "site-preview" });
+      persistUser(user);
+      signupForm.reset();
+      renderAuthState(user);
+      setMessage("로컬 미리보기 계정으로 로그인되었습니다.", "success");
+      return;
+    }
+
+    setMessage("회원가입 API 설정이 필요합니다. VITE_AUTH_API_BASE를 연결해 주세요.", "error");
   } catch (error) {
     setMessage(error.message || "회원가입하지 못했습니다.", "error");
+  }
+});
+
+verifyForm?.addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const formData = new FormData(verifyForm);
+  const email = String(formData.get("email") || "").trim();
+  const code = String(formData.get("code") || "").trim();
+
+  if (!email || !code) {
+    setMessage("이메일과 인증 코드를 입력해 주세요.", "error");
+    return;
+  }
+
+  try {
+    const payload = await postAuth("/auth/verify-email", { email, code, token: code });
+    signInFromPayload(payload, "이메일 인증이 완료되었습니다.");
+    verifyForm.reset();
+  } catch (error) {
+    setMessage(error.message || "이메일 인증에 실패했습니다.", "error");
+  }
+});
+
+resendVerificationButton?.addEventListener("click", async () => {
+  const email = String(verifyForm?.elements?.email?.value || "").trim();
+  if (!email) {
+    setMessage("인증 메일을 받을 이메일을 입력해 주세요.", "error");
+    return;
+  }
+
+  try {
+    const payload = await postAuth("/auth/resend-verification", { email });
+    setMessage(previewMessage(payload, "인증 메일을 다시 보냈습니다."), "success");
+  } catch (error) {
+    setMessage(error.message || "인증 메일을 다시 보내지 못했습니다.", "error");
   }
 });
 
@@ -1016,15 +948,41 @@ resetForm?.addEventListener("submit", async (event) => {
   }
 
   try {
-    if (authApiBase) {
-      await postAuth("/auth/reset", { email });
-    } else if (!allowLocalAuthPreview) {
+    const payload = authApiBase ? await postAuth("/auth/reset", { email }) : {};
+    if (!authApiBase && !allowLocalAuthPreview) {
       setMessage("회원가입 API 설정이 필요합니다. VITE_AUTH_API_BASE를 연결해 주세요.", "error");
       return;
     }
-    setMessage(`${email} 주소로 비밀번호 재설정 요청을 준비했습니다.`, "success");
+    setMode("resetConfirm");
+    setFormEmail(resetConfirmForm, email);
+    setMessage(previewMessage(payload, "재설정 메일을 보냈습니다. 메일함에서 코드를 확인해 주세요."), "success");
   } catch (error) {
     setMessage(error.message || "비밀번호 재설정 요청을 처리하지 못했습니다.", "error");
+  }
+});
+
+resetConfirmForm?.addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const formData = new FormData(resetConfirmForm);
+  const email = String(formData.get("email") || "").trim();
+  const code = String(formData.get("code") || "").trim();
+  const password = String(formData.get("password") || "");
+
+  if (!email || !code || !password) {
+    setMessage("이메일, 재설정 코드, 새 비밀번호를 모두 입력해 주세요.", "error");
+    return;
+  }
+  if (password.length < 8) {
+    setMessage("비밀번호는 8자 이상으로 입력해 주세요.", "error");
+    return;
+  }
+
+  try {
+    const payload = await postAuth("/auth/reset/confirm", { email, code, token: code, password });
+    signInFromPayload(payload, "비밀번호가 변경되고 로그인되었습니다.");
+    resetConfirmForm.reset();
+  } catch (error) {
+    setMessage(error.message || "비밀번호를 변경하지 못했습니다.", "error");
   }
 });
 
@@ -1035,7 +993,79 @@ signoutButton?.addEventListener("click", () => {
   setMessage("로그아웃되었습니다.");
 });
 
+characterForm?.addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const user = readStoredUser();
+  if (!user) {
+    setMessage("먼저 로그인해 주세요.", "error");
+    return;
+  }
+
+  const formData = new FormData(characterForm);
+  const nickname = String(formData.get("nickname") || "").trim();
+  if (!nickname) {
+    setCharacterStatus("닉네임 필요", "error");
+    return;
+  }
+
+  setCharacterStatus("코드 생성 중");
+  const playerProfile = await requestPlayerVerification(nickname, user);
+  writePlayerProfile(playerProfile, user);
+  renderVerifyCard(playerProfile);
+  renderInventory(null);
+  renderWebActions(playerProfile);
+  setCharacterStatus(playerProfile.verified ? "인증 완료" : "인증 확인 필요", playerProfile.verified ? "success" : "idle");
+  if (refreshInventoryButton) refreshInventoryButton.disabled = !playerProfile.verified;
+  if (playerProfile.verified) loadPlayerInventory(playerProfile, user);
+  setMessage(`${nickname} 캐릭터 인증 코드를 만들었습니다.`, "success");
+});
+
+checkCharacterButton?.addEventListener("click", async () => {
+  const user = readStoredUser();
+  const playerProfile = readPlayerProfile(user);
+  if (!user || !playerProfile) {
+    setCharacterStatus("인증 대기", "error");
+    return;
+  }
+
+  setCharacterStatus("인증 확인 중");
+  const nextProfile = await checkPlayerVerification(playerProfile, user);
+  writePlayerProfile(nextProfile, user);
+  renderVerifyCard(nextProfile);
+  renderWebActions(nextProfile);
+  setCharacterStatus(nextProfile.verified ? "인증 완료" : "아직 미인증", nextProfile.verified ? "success" : "error");
+  if (refreshInventoryButton) refreshInventoryButton.disabled = !nextProfile.verified;
+
+  if (nextProfile.verified) {
+    await loadPlayerInventory(nextProfile, user);
+    setMessage(`${nextProfile.nickname} 캐릭터가 인증되었습니다.`, "success");
+  } else {
+    setMessage("서버에서 아직 캐릭터 인증을 확인하지 못했습니다.", "error");
+  }
+});
+
+copyVerifyCommandButton?.addEventListener("click", async () => {
+  const playerProfile = readPlayerProfile();
+  if (!playerProfile?.code) return;
+  const copied = await copyText(getVerifyCommand(playerProfile.code));
+  setMessage(copied ? "인증 명령어를 복사했습니다." : "명령어 복사에 실패했습니다.", copied ? "success" : "error");
+});
+
+refreshInventoryButton?.addEventListener("click", () => {
+  const user = readStoredUser();
+  const playerProfile = readPlayerProfile(user);
+  if (playerProfile?.verified) loadPlayerInventory(playerProfile, user);
+});
+
+playerActionButtons.forEach((button) => {
+  button.addEventListener("click", () => {
+    const action = button.dataset.playerAction;
+    if (action) postPlayerAction(action);
+  });
+});
+
 renderAutoLogin();
 setMode("login");
 renderAuthState();
 initGoogleLogin();
+applyUrlAuthMode();
