@@ -24,6 +24,11 @@ VITE_AUTH_API_BASE=https://api-id.execute-api.ap-northeast-1.amazonaws.com
 
 Do not put database keys or auth pepper values in Vite variables. `VITE_*` values are public in the browser.
 
+Production deploys create or update the AWS auth backend before building the
+site. The deploy workflow writes the generated API endpoint to
+`.env.auth.generated` and exports it as `VITE_AUTH_API_BASE` for the Vite build,
+so the deployed site is built against the real signup/login API.
+
 ## AWS Resources
 
 AWS setup is blocked by default so it cannot accidentally create billable

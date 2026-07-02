@@ -29,6 +29,9 @@ jobs:
       CERTIFICATE_ARN: ${{ secrets.CERTIFICATE_ARN || 'arn:aws:acm:us-east-1:358982198253:certificate/4ee2b26e-b3fb-4856-84c4-62030cb5ce62' }}
       SITE_BUCKET: ${{ secrets.SITE_BUCKET || 'menhera-minecraft-server-website' }}
       SITE_DOMAIN: ${{ secrets.SITE_DOMAIN || 'www.nfoifsb.kr' }}
+      AUTH_STACK_NAME: ${{ secrets.AUTH_STACK_NAME || 'nfoifsb-auth' }}
+      AUTH_ALLOWED_ORIGINS: ${{ secrets.AUTH_ALLOWED_ORIGINS }}
+      AUTH_PEPPER: ${{ secrets.AUTH_PEPPER }}
       VITE_GOOGLE_CLIENT_ID: ${{ secrets.VITE_GOOGLE_CLIENT_ID }}
       VITE_AUTH_API_BASE: ${{ secrets.VITE_AUTH_API_BASE }}
       VITE_PLAYER_API_BASE: ${{ secrets.VITE_PLAYER_API_BASE }}
@@ -59,6 +62,18 @@ jobs:
           role-to-assume: arn:aws:iam::358982198253:role/GitHubActionsMincraftServerWebsiteDeployRole
           aws-region: ${{ env.AWS_REGION }}
 
+      - name: Create or update auth backend
+        run: npm run auth:setup:aws
+
+      - name: Use generated auth API for Vite build
+        shell: bash
+        run: |
+          if [ ! -s .env.auth.generated ]; then
+            echo ".env.auth.generated was not created by auth setup." >&2
+            exit 1
+          fi
+          cat .env.auth.generated >> "$GITHUB_ENV"
+
       - name: Build and deploy to AWS
         run: npm run deploy:aws
 
@@ -67,5 +82,8 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: deploy-output
-          path: deploy-output.json
+          path: |
+            deploy-output.json
+            auth-output.json
+            .env.auth.generated
           if-no-files-found: ignore
