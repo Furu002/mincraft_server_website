@@ -6,6 +6,7 @@ const rootDir = fileURLToPath(new URL(".", import.meta.url));
 
 export default defineConfig({
   build: {
+    chunkSizeWarningLimit: 550,
     rollupOptions: {
       input: {
         main: resolve(rootDir, "index.html"),
@@ -14,6 +15,12 @@ export default defineConfig({
         plugins: resolve(rootDir, "plugins.html"),
         rules: resolve(rootDir, "rules.html"),
         join: resolve(rootDir, "join.html"),
+      },
+      output: {
+        manualChunks(id) {
+          if (id.includes("node_modules/three")) return "vendor-three";
+          return undefined;
+        },
       },
     },
   },

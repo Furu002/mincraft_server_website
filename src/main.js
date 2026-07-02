@@ -47,6 +47,27 @@ const PAGE_LINKS = new Map([
 
 let sessionUser = null;
 
+function startVisiblePoll(task, intervalMs, options = {}) {
+  const { immediate = true } = options;
+  let running = false;
+
+  const run = () => {
+    if (document.visibilityState === "hidden" || running) return;
+    running = true;
+    Promise.resolve(task()).finally(() => {
+      running = false;
+    });
+  };
+
+  const interval = window.setInterval(run, intervalMs);
+  document.addEventListener("visibilitychange", () => {
+    if (document.visibilityState === "visible") run();
+  });
+  if (immediate) run();
+
+  return interval;
+}
+
 function fallbackCopy(text) {
   const textarea = document.createElement("textarea");
   textarea.value = text;
@@ -1145,17 +1166,20 @@ function initStockExchange() {
       render();
     });
   });
-  refreshMarket();
+  startVisiblePoll(refreshMarket, 20000);
   if (!reduceMotion) {
-    window.setInterval(() => {
-      tick += 1;
-      if (!liveMarket) {
-        market = buildFallbackMarket(tick);
-        render();
-      }
-    }, 3200);
+    startVisiblePoll(
+      () => {
+        tick += 1;
+        if (!liveMarket) {
+          market = buildFallbackMarket(tick);
+          render();
+        }
+      },
+      3200,
+      { immediate: false },
+    );
   }
-  window.setInterval(refreshMarket, 20000);
 }
 
 function initScrollReveal() {
@@ -1232,10 +1256,8 @@ initScrollReveal();
 initLogin();
 deferSceneLoad();
 if (statusDot || cacheState) {
-  refreshStatus();
-  setInterval(refreshStatus, 60000);
+  startVisiblePoll(refreshStatus, 60000);
 }
 if (hasRamWidgets()) {
-  refreshServerOverview();
-  setInterval(refreshServerOverview, 60000);
+  startVisiblePoll(refreshServerOverview, 60000);
 }
