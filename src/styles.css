@@ -3677,6 +3677,42 @@ input:focus-visible,
   font-weight: 760;
 }
 
+.stock-financial-clock {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.stock-financial-clock span,
+.stock-financial-clock strong,
+.stock-financial-clock em {
+  display: inline-flex;
+  align-items: center;
+  min-height: 28px;
+  padding: 0 10px;
+  border: 1px solid var(--stock-border);
+  border-radius: 999px;
+  background: var(--stock-panel-soft);
+  font-size: 11px;
+  font-style: normal;
+  font-weight: 900;
+}
+
+.stock-financial-clock span {
+  color: var(--stock-blue);
+  background: rgba(30, 100, 214, 0.1);
+}
+
+.stock-financial-clock strong {
+  color: var(--stock-text);
+}
+
+.stock-financial-clock em {
+  color: var(--stock-muted);
+}
+
 .stock-financial-score {
   position: relative;
   display: grid;

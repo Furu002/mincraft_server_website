@@ -82,7 +82,8 @@ const STOCKS = [
   { code: "LOG", name: "건축 목재", base: 890, volume: 9340, drift: -0.012 },
   { code: "RED", name: "레드스톤 공업", base: 2160, volume: 7990, drift: 0.033 },
 ];
-const FINANCIAL_PERIODS = ["FY2026E", "FY2025", "FY2024", "FY2023"];
+const FINANCIAL_PERIOD_COUNT = 4;
+const FINANCIAL_QUARTER_SEASONALITY = [0.94, 1.0, 1.02, 1.08];
 const STOCK_RANGE_CONFIG = {
   "1M": { points: 10, stepMs: 60_000, label: "1분 전" },
   "5M": { points: 16, stepMs: 60_000, label: "5분 전" },
@@ -1281,9 +1282,64 @@ function periodRatio(numerator, denominator) {
   return top / bottom;
 }
 
+function financialKstParts(source = new Date()) {
+  const parts = new Intl.DateTimeFormat("en-US", {
+    timeZone: "Asia/Seoul",
+    year: "numeric",
+    month: "numeric",
+    day: "numeric",
+  }).formatToParts(source);
+  const get = (type) => Number(parts.find((part) => part.type === type)?.value);
+  return {
+    year: get("year"),
+    month: get("month"),
+    day: get("day"),
+  };
+}
+
+function formatFinancialDate(year, month, day = 1) {
+  return `${year}.${String(month).padStart(2, "0")}.${String(day).padStart(2, "0")}`;
+}
+
+function currentFinancialQuarter(source = new Date()) {
+  const now = financialKstParts(source);
+  const quarter = Math.floor((now.month - 1) / 3) + 1;
+  const nextQuarterMonth = quarter === 4 ? 1 : quarter * 3 + 1;
+  const nextQuarterYear = quarter === 4 ? now.year + 1 : now.year;
+  return {
+    year: now.year,
+    quarter,
+    label: `${now.year} Q${quarter}E`,
+    generatedAt: formatFinancialDate(now.year, now.month, now.day),
+    nextUpdate: formatFinancialDate(nextQuarterYear, nextQuarterMonth, 1),
+  };
+}
+
+function financialQuarterPeriods(meta = currentFinancialQuarter(), count = FINANCIAL_PERIOD_COUNT) {
+  const periods = [];
+  let year = meta.year;
+  let quarter = meta.quarter;
+  for (let index = 0; index < count; index += 1) {
+    periods.push({
+      year,
+      quarter,
+      label: `${year} Q${quarter}${index === 0 ? "E" : ""}`,
+      isEstimate: index === 0,
+    });
+    quarter -= 1;
+    if (quarter < 1) {
+      quarter = 4;
+      year -= 1;
+    }
+  }
+  return periods;
+}
+
 function buildStockFinancials(stock, metrics = {}) {
   const code = stockCode(stock);
   const seed = stockFinancialSeed(code);
+  const quarterMeta = currentFinancialQuarter();
+  const periodLabels = financialQuarterPeriods(quarterMeta);
   const price = Math.max(1, Number(stock?.price || stock?.base) || 1);
   const rawShares = Number(stock?.sharesOutstanding ?? stock?.shares ?? stock?.volume);
   const marketCapInput = Number(stock?.marketCap);
@@ -1297,20 +1353,23 @@ function buildStockFinancials(stock, metrics = {}) {
       ? rawDrift * 100
       : rawDrift;
   const volatility = Number(metrics?.volatility || 0);
-  const revenueGrowth = clampStockValue(0.045 + change / 150 + seed * 0.012 - volatility / 900, -0.055, 0.22);
-  const baseRevenue = Math.max(
+  const annualGrowth = clampStockValue(0.045 + change / 150 + seed * 0.012 - volatility / 900, -0.055, 0.22);
+  const quarterlyGrowth = (1 + annualGrowth) ** 0.25 - 1;
+  const currentSeasonality = FINANCIAL_QUARTER_SEASONALITY[quarterMeta.quarter - 1] || 1;
+  const annualRevenue = Math.max(
     marketCap * (0.68 + seed * 0.28) + price * Math.max(1, Number(stock?.volume24h || stock?.volume || 1)) * 0.012,
     marketCap * 0.52,
   );
-  const grossMargin = clampStockValue(0.34 + seed * 0.16 + revenueGrowth * 0.32 - volatility / 500, 0.24, 0.68);
+  const grossMargin = clampStockValue(0.34 + seed * 0.16 + annualGrowth * 0.32 - volatility / 500, 0.24, 0.68);
   const operatingMargin = clampStockValue(grossMargin - (0.15 + seed * 0.055), 0.055, 0.38);
   const netMargin = clampStockValue(operatingMargin - 0.036 - seed * 0.016, 0.024, 0.29);
-  const assetTurnover = clampStockValue(1.18 + seed * 0.34 + revenueGrowth, 0.8, 1.85);
+  const assetTurnover = clampStockValue(1.18 + seed * 0.34 + annualGrowth, 0.8, 1.85);
   const liabilityRatio = clampStockValue(0.34 + seed * 0.18 - netMargin * 0.18 + volatility / 260, 0.2, 0.62);
 
-  const periods = FINANCIAL_PERIODS.map((label, index) => {
-    const factor = (1 + revenueGrowth) ** -index;
-    const revenue = baseRevenue * factor;
+  const periods = periodLabels.map((period, index) => {
+    const factor = (1 + quarterlyGrowth) ** -index;
+    const seasonality = FINANCIAL_QUARTER_SEASONALITY[period.quarter - 1] || 1;
+    const revenue = (annualRevenue / 4) * factor * (seasonality / currentSeasonality);
     const marginStep = index * 0.006;
     const periodGrossMargin = clampStockValue(grossMargin - marginStep * 0.55, 0.2, 0.7);
     const periodOperatingMargin = clampStockValue(operatingMargin - marginStep, 0.035, 0.42);
@@ -1330,18 +1389,21 @@ function buildStockFinancials(stock, metrics = {}) {
     const debt = totalLiabilities * (0.44 + seed * 0.18);
     const currentLiabilities = totalLiabilities * (0.38 + seed * 0.08);
     const equity = totalAssets - totalLiabilities;
-    const workingCapitalDrag = revenue * clampStockValue(0.012 + Math.max(revenueGrowth, 0) * 0.05, 0.004, 0.035);
+    const workingCapitalDrag = revenue * clampStockValue(0.012 + Math.max(quarterlyGrowth, 0) * 0.05, 0.004, 0.035);
     const operatingCashFlow = netIncome + depreciation - workingCapitalDrag;
-    const capex = -revenue * (0.048 + Math.max(revenueGrowth, 0) * 0.16 + seed * 0.016);
+    const capex = -revenue * (0.048 + Math.max(quarterlyGrowth, 0) * 0.16 + seed * 0.016);
     const freeCashFlow = operatingCashFlow + capex;
     const financingCashFlow = -Math.max(0, debt * 0.035 - freeCashFlow * 0.04);
     const enterpriseValue = marketCap + debt - cash;
     const investedCapital = Math.max(1, debt + equity - cash);
 
     return {
-      label,
+      label: period.label,
+      year: period.year,
+      quarter: period.quarter,
+      isEstimate: period.isEstimate,
       revenue,
-      revenueGrowth: index === FINANCIAL_PERIODS.length - 1 ? null : revenueGrowth * 100,
+      revenueGrowth: index === periodLabels.length - 1 ? null : quarterlyGrowth * 100,
       grossProfit,
       grossMargin: periodGrossMargin * 100,
       operatingIncome,
@@ -1399,6 +1461,7 @@ function buildStockFinancials(stock, metrics = {}) {
     code,
     name: stock?.name || code,
     periods,
+    quarterMeta,
     latest,
     qualityScore,
     qualityLabel,
@@ -1409,7 +1472,7 @@ function buildStockFinancials(stock, metrics = {}) {
       stability: stabilityScore,
       cash: cashScore,
     },
-    summary: `${stock?.name || code}는 ${formatStockPercent(latest.revenueGrowth, 1, true)} 매출 성장과 ${formatStockPercent(latest.operatingMargin)} 영업이익률을 기록하는 ${qualityLabel} 종목입니다. ${valuationLabel}이며, FCF Yield ${formatStockPercent(latest.fcfYield)}와 부채비율 ${formatStockPercent(latest.debtRatio)}를 함께 봐야 합니다.`,
+    summary: `${stock?.name || code}의 ${quarterMeta.label} AI 분기 실적은 ${formatStockPercent(latest.revenueGrowth, 1, true)} 분기 매출 성장과 ${formatStockPercent(latest.operatingMargin)} 영업이익률을 기록했습니다. ${qualityLabel}·${valuationLabel} 구간이며, 다음 자동 업데이트는 ${quarterMeta.nextUpdate}입니다.`,
   };
 }
 
@@ -1460,7 +1523,7 @@ function financialStatementRows(financials, view) {
   }
   return [
     row("매출액", "revenue"),
-    row("매출 성장률", "revenueGrowth", "percent-signed"),
+    row("분기 매출 성장률", "revenueGrowth", "percent-signed"),
     row("매출총이익", "grossProfit"),
     row("매출총이익률", "grossMargin", "percent"),
     row("영업이익", "operatingIncome"),
@@ -1487,10 +1550,20 @@ function renderStockFinancials(elements, stock, metrics, view = "income") {
   const latest = financials.latest;
   const rows = financialStatementRows(financials, view);
 
-  if (elements.period) elements.period.textContent = `${FINANCIAL_PERIODS[0]} · KRW`;
+  if (elements.period) elements.period.textContent = `${financials.quarterMeta.label} · AI · KRW`;
   if (elements.code) elements.code.textContent = financials.code;
   if (elements.company) elements.company.textContent = financials.name;
   if (elements.summary) elements.summary.textContent = financials.summary;
+  if (elements.clock) {
+    elements.clock.replaceChildren();
+    const mode = document.createElement("span");
+    mode.textContent = "AI 분기 자동작성";
+    const period = document.createElement("strong");
+    period.textContent = financials.quarterMeta.label;
+    const next = document.createElement("em");
+    next.textContent = `KST ${financials.quarterMeta.generatedAt} 생성 · 다음 업데이트 ${financials.quarterMeta.nextUpdate}`;
+    elements.clock.append(mode, period, next);
+  }
   if (elements.score) {
     elements.score.style.setProperty("--score", `${financials.qualityScore}%`);
     elements.score.replaceChildren();
@@ -1504,7 +1577,7 @@ function renderStockFinancials(elements, stock, metrics, view = "income") {
   }
   if (elements.kpis) {
     const kpis = [
-      ["매출", formatStockKrwCompact(latest.revenue), `YoY ${formatStockPercent(latest.revenueGrowth, 1, true)}`, latest.revenueGrowth],
+      ["매출", formatStockKrwCompact(latest.revenue), `QoQ ${formatStockPercent(latest.revenueGrowth, 1, true)}`, latest.revenueGrowth],
       ["영업이익률", formatStockPercent(latest.operatingMargin), `순이익률 ${formatStockPercent(latest.netMargin)}`, latest.operatingMargin - 12],
       ["FCF", formatStockKrwCompact(latest.freeCashFlow), `FCF 마진 ${formatStockPercent(latest.fcfMargin)}`, latest.freeCashFlow],
       ["PER / PBR", `${formatStockMultiple(latest.per)} / ${formatStockMultiple(latest.pbr)}`, financials.valuationLabel, latest.fcfYield],
@@ -2476,6 +2549,7 @@ function initStockExchange() {
     code: document.querySelector("[data-stock-financial-code]"),
     company: document.querySelector("[data-stock-financial-company]"),
     summary: document.querySelector("[data-stock-financial-summary]"),
+    clock: document.querySelector("[data-stock-financial-clock]"),
     score: document.querySelector("[data-stock-financial-score]"),
     kpis: document.querySelector("[data-stock-financial-kpis]"),
     head: document.querySelector("[data-stock-financial-head]"),
