@@ -280,6 +280,32 @@ async function getExistingPepper() {
   }
 }
 
+async function waitForFunctionReady() {
+  for (let attempt = 0; attempt < 30; attempt += 1) {
+    const config = await lambda.send(new GetFunctionConfigurationCommand({ FunctionName: functionName }));
+    if (config.State === "Active" && !["InProgress", "Pending"].includes(config.LastUpdateStatus)) {
+      return config;
+    }
+    await sleep(2000);
+  }
+
+  return await lambda.send(new GetFunctionConfigurationCommand({ FunctionName: functionName }));
+}
+
+async function sendLambdaWhenReady(commandFactory) {
+  for (let attempt = 0; attempt < 12; attempt += 1) {
+    try {
+      return await lambda.send(commandFactory());
+    } catch (error) {
+      if (error.name !== "ResourceConflictException") throw error;
+      log("Lambda update is still in progress; waiting before retrying...");
+      await waitForFunctionReady();
+    }
+  }
+
+  return await lambda.send(commandFactory());
+}
+
 async function ensureFunction(roleArn) {
   const source = readFileSync(lambdaSource);
   const zipFile = zipSingleFile("index.mjs", source);
@@ -298,14 +324,15 @@ async function ensureFunction(roleArn) {
 
   try {
     await lambda.send(new GetFunctionCommand({ FunctionName: functionName }));
-    await lambda.send(
-      new UpdateFunctionCodeCommand({
+    await sendLambdaWhenReady(
+      () => new UpdateFunctionCodeCommand({
         FunctionName: functionName,
         ZipFile: zipFile,
       }),
     );
-    await lambda.send(
-      new UpdateFunctionConfigurationCommand({
+    await waitForFunctionReady();
+    await sendLambdaWhenReady(
+      () => new UpdateFunctionConfigurationCommand({
         FunctionName: functionName,
         Runtime: "nodejs20.x",
         Handler: "index.handler",
@@ -345,15 +372,7 @@ async function ensureFunction(roleArn) {
     log("Generated a new Lambda AUTH_PEPPER and stored it in the encrypted Lambda environment.");
   }
 
-  for (let attempt = 0; attempt < 30; attempt += 1) {
-    const config = await lambda.send(new GetFunctionConfigurationCommand({ FunctionName: functionName }));
-    if (config.State === "Active" && !["InProgress", "Pending"].includes(config.LastUpdateStatus)) {
-      return config.FunctionArn;
-    }
-    await sleep(2000);
-  }
-
-  const config = await lambda.send(new GetFunctionConfigurationCommand({ FunctionName: functionName }));
+  const config = await waitForFunctionReady();
   return config.FunctionArn;
 }
 
