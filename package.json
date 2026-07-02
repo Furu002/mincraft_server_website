@@ -8,6 +8,8 @@
     "dev:local": "node scripts/dev-local.mjs",
     "auth:dev": "node server/auth/local-server.mjs",
     "build": "vite build",
+    "discord:register": "node discord-bot/register-commands.mjs",
+    "discord:start": "node discord-bot/index.mjs",
     "auth:setup:aws": "node scripts/aws-auth-setup.mjs",
     "deploy:aws": "npm run build && node scripts/aws-deploy.mjs",
     "preview": "vite preview --host 127.0.0.1"
@@ -26,6 +28,12 @@
     "vite": "^7.0.0"
   },
   "dependencies": {
+    "discord.js": "^14.26.4",
+    "dotenv": "^17.4.2",
+    "pngjs": "^7.0.0",
     "three": "^0.185.0"
+  },
+  "overrides": {
+    "undici": "6.27.0"
   }
 }
