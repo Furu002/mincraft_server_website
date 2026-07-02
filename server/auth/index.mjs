@@ -871,7 +871,7 @@ export async function handler(event) {
 
     if (method === "POST" && path.endsWith("/auth/signup")) {
       const limited = await rateLimitResponse(origin, [
-        { scope: "signup-ip", identity: ip, limit: 8, windowSeconds: 3600 },
+        { scope: "signup-ip", identity: ip, limit: 30, windowSeconds: 3600 },
         { scope: "signup-email", identity: email, limit: 4, windowSeconds: 3600 },
       ]);
       if (limited) return limited;
