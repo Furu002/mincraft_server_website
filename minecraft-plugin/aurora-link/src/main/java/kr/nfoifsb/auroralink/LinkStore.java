@@ -69,13 +69,27 @@ public final class LinkStore {
     long expiresAt =
         now.plus(Duration.ofMinutes(plugin.getConfig().getLong("verification.code-expire-minutes", 10))).toEpochMilli();
 
+    return storePendingVerification(nickname, accountKey, code, now.toEpochMilli(), expiresAt);
+  }
+
+  public synchronized PendingVerification startVerification(
+      String nickname, Map<String, Object> account, String code, long expiresAt) {
+    cleanupExpired();
+    return storePendingVerification(nickname, accountKey(account), code, Instant.now().toEpochMilli(), expiresAt);
+  }
+
+  private PendingVerification storePendingVerification(
+      String nickname, String accountKey, String code, long requestedAt, long expiresAt) {
     PendingVerification pending = new PendingVerification();
     pending.nickname = nickname;
     pending.nicknameKey = key(nickname);
     pending.accountKey = accountKey;
     pending.code = code;
-    pending.requestedAt = now.toEpochMilli();
+    pending.requestedAt = requestedAt;
     pending.expiresAt = expiresAt;
+    data.pendingByCode.entrySet().removeIf(entry ->
+        Objects.equals(entry.getValue().nicknameKey, pending.nicknameKey)
+            || Objects.equals(entry.getValue().accountKey, pending.accountKey));
     data.pendingByCode.put(code, pending);
     save();
     return pending;
@@ -120,6 +134,57 @@ public final class LinkStore {
     if (link == null || !Objects.equals(link.nicknameKey, key(nickname))) {
       return null;
     }
+    return link;
+  }
+
+  public synchronized PendingVerification findPending(Map<String, Object> account, String nickname, String code) {
+    cleanupExpired();
+    String accountKey = accountKey(account);
+    String nicknameKey = key(nickname);
+    String requestedCode = String.valueOf(code).trim();
+    PendingVerification direct = data.pendingByCode.get(requestedCode);
+    if (direct != null
+        && Objects.equals(direct.accountKey, accountKey)
+        && Objects.equals(direct.nicknameKey, nicknameKey)) {
+      return direct;
+    }
+    if (!requestedCode.isBlank()) {
+      return null;
+    }
+    return data.pendingByCode.values().stream()
+        .filter(pending ->
+            Objects.equals(pending.accountKey, accountKey)
+                && Objects.equals(pending.nicknameKey, nicknameKey))
+        .findFirst()
+        .orElse(null);
+  }
+
+  public synchronized LinkedPlayer linkExternal(Map<String, Object> account, String nickname, String uuid) {
+    cleanupExpired();
+    String accountKey = accountKey(account);
+    String nicknameKey = key(nickname);
+    LinkedPlayer link = data.linksByAccount.get(accountKey);
+    if (link == null) {
+      link = new LinkedPlayer();
+      link.webToken = newToken();
+    }
+    link.nickname = nickname;
+    link.nicknameKey = nicknameKey;
+    link.uuid = uuid == null || uuid.isBlank() ? nicknameKey : uuid;
+    link.accountKey = accountKey;
+    if (link.webToken == null || link.webToken.isBlank()) link.webToken = newToken();
+    link.verifiedAt = Instant.now().toEpochMilli();
+    link.tokenExpiresAt =
+        Instant.now()
+            .plus(Duration.ofDays(plugin.getConfig().getLong("verification.web-token-days", 30)))
+            .toEpochMilli();
+
+    data.linksByAccount.put(accountKey, link);
+    data.linksByNickname.put(nicknameKey, link);
+    data.pendingByCode.entrySet().removeIf(entry ->
+        Objects.equals(entry.getValue().nicknameKey, nicknameKey)
+            && Objects.equals(entry.getValue().accountKey, accountKey));
+    save();
     return link;
   }
 

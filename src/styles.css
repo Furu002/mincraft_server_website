@@ -742,6 +742,15 @@ a {
   animation: meter-shine 2.8s ease-in-out infinite;
 }
 
+.dashboard-meter {
+  height: 8px;
+  margin-top: 14px;
+}
+
+.dashboard-meter + p {
+  margin-top: 12px;
+}
+
 .player-heads {
   display: flex;
   flex-wrap: wrap;

@@ -11,6 +11,7 @@ public final class AuroraLinkPlugin extends JavaPlugin {
   private BridgeHttpServer bridgeServer;
   private PlayerActions playerActions;
   private StockExchange stockExchange;
+  private WebAuthWhitelistBridge webAuthBridge;
   private Economy economy;
 
   @Override
@@ -52,12 +53,13 @@ public final class AuroraLinkPlugin extends JavaPlugin {
     economy = loadVaultEconomy();
     playerActions = new PlayerActions(this, linkStore, economy);
     stockExchange = new StockExchange(this);
+    webAuthBridge = new WebAuthWhitelistBridge(this);
     stockExchange.start();
 
     registerCommands();
 
     if (getConfig().getBoolean("api.enabled", true)) {
-      bridgeServer = new BridgeHttpServer(this, linkStore, playerActions, stockExchange);
+      bridgeServer = new BridgeHttpServer(this, linkStore, playerActions, stockExchange, webAuthBridge);
       bridgeServer.start();
     } else {
       getLogger().warning("AuroraLink web API is disabled in config.yml.");
@@ -76,6 +78,7 @@ public final class AuroraLinkPlugin extends JavaPlugin {
     if (linkStore != null) {
       linkStore.save();
     }
+    webAuthBridge = null;
   }
 
   private void registerCommands() {

@@ -39,17 +39,23 @@ public final class BridgeHttpServer {
   private final LinkStore linkStore;
   private final PlayerActions playerActions;
   private final StockExchange stockExchange;
+  private final WebAuthWhitelistBridge webAuthBridge;
   private final Gson gson = new Gson();
   private final RateLimiter rateLimiter;
   private HttpServer server;
   private ExecutorService executor;
 
   public BridgeHttpServer(
-      AuroraLinkPlugin plugin, LinkStore linkStore, PlayerActions playerActions, StockExchange stockExchange) {
+      AuroraLinkPlugin plugin,
+      LinkStore linkStore,
+      PlayerActions playerActions,
+      StockExchange stockExchange,
+      WebAuthWhitelistBridge webAuthBridge) {
     this.plugin = plugin;
     this.linkStore = linkStore;
     this.playerActions = playerActions;
     this.stockExchange = stockExchange;
+    this.webAuthBridge = webAuthBridge;
     this.rateLimiter = new RateLimiter(plugin.getConfig().getInt("api.rate-limit-per-minute", 80));
   }
 
@@ -191,7 +197,18 @@ public final class BridgeHttpServer {
     String nickname = LinkStore.value(body.get("nickname"), "").trim();
     if (nickname.isBlank()) throw new HttpError(400, "nickname is required.");
     Map<String, Object> account = accountFrom(body);
-    LinkStore.PendingVerification pending = linkStore.startVerification(nickname, account);
+    LinkStore.PendingVerification pending;
+    if (webAuthBridge != null && webAuthBridge.enabled()) {
+      try {
+        WebAuthWhitelistBridge.RequestResult external = webAuthBridge.requestCode(nickname, account);
+        pending = linkStore.startVerification(nickname, account, external.code(), external.expiresAt());
+      } catch (WebAuthWhitelistBridge.BridgeException error) {
+        plugin.getLogger().warning("WebAuthWhitelist code request failed: " + error.getMessage());
+        throw new HttpError(502, "Minecraft web authentication is temporarily unavailable.");
+      }
+    } else {
+      pending = linkStore.startVerification(nickname, account);
+    }
     LinkStore.LinkedPlayer existing = linkStore.findLink(account, nickname);
     Map<String, Object> response = new HashMap<>();
     response.put("ok", true);
@@ -204,10 +221,26 @@ public final class BridgeHttpServer {
     return response;
   }
 
-  private Map<String, Object> verificationCheck(Map<String, Object> body) {
+  private Map<String, Object> verificationCheck(Map<String, Object> body) throws Exception {
     String nickname = LinkStore.value(body.get("nickname"), "").trim();
     if (nickname.isBlank()) throw new HttpError(400, "nickname is required.");
-    LinkStore.LinkedPlayer link = linkStore.findLink(accountFrom(body), nickname);
+    Map<String, Object> account = accountFrom(body);
+    String code = LinkStore.value(body.get("code"), "").trim();
+    LinkStore.LinkedPlayer link = linkStore.findLink(account, nickname);
+    if (link == null && webAuthBridge != null && webAuthBridge.enabled()) {
+      LinkStore.PendingVerification pending = linkStore.findPending(account, nickname, code);
+      if (pending != null) {
+        try {
+          WebAuthWhitelistBridge.StatusResult status = webAuthBridge.status(nickname);
+          if (status.verified()) {
+            String uuid = sync(() -> playerUuid(nickname));
+            link = linkStore.linkExternal(account, nickname, uuid);
+          }
+        } catch (WebAuthWhitelistBridge.BridgeException error) {
+          plugin.getLogger().warning("WebAuthWhitelist status request failed: " + error.getMessage());
+        }
+      }
+    }
     Map<String, Object> response = new HashMap<>();
     response.put("ok", true);
     response.put("nickname", nickname);
@@ -219,6 +252,12 @@ public final class BridgeHttpServer {
       response.put("tokenExpiresAt", Instant.ofEpochMilli(link.tokenExpiresAt).toString());
     }
     return response;
+  }
+
+  private String playerUuid(String nickname) {
+    Player online = Bukkit.getPlayerExact(nickname);
+    if (online != null) return online.getUniqueId().toString();
+    return Bukkit.getOfflinePlayer(nickname).getUniqueId().toString();
   }
 
   private Map<String, Object> serverOverview() {
@@ -240,8 +279,27 @@ public final class BridgeHttpServer {
     response.put("linkedPlayers", linkStore.linkedCount());
     response.put("economyProvider", plugin.economy() == null ? "" : plugin.economy().getName());
     response.put("players", Map.of("online", players.size(), "max", Bukkit.getMaxPlayers(), "list", players));
+    response.put("memory", memorySnapshot());
     response.put("tps", readTps());
+    response.put("updatedAt", Instant.now().toString());
     return response;
+  }
+
+  private Map<String, Object> memorySnapshot() {
+    Runtime runtime = Runtime.getRuntime();
+    long maxBytes = runtime.maxMemory();
+    long totalBytes = runtime.totalMemory();
+    long freeBytes = runtime.freeMemory();
+    long usedBytes = Math.max(0L, totalBytes - freeBytes);
+    double usedPercent = maxBytes > 0 ? Math.round((usedBytes * 1000.0) / maxBytes) / 10.0 : 0.0;
+
+    Map<String, Object> memory = new HashMap<>();
+    memory.put("usedBytes", usedBytes);
+    memory.put("freeBytes", freeBytes);
+    memory.put("totalBytes", totalBytes);
+    memory.put("maxBytes", maxBytes);
+    memory.put("usedPercent", usedPercent);
+    return memory;
   }
 
   private Map<String, Object> inventorySnapshot(String nickname) {

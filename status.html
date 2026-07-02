@@ -105,7 +105,7 @@
                   <path d="M9 2v3M15 2v3M9 19v3M15 19v3M2 9h3M2 15h3M19 9h3M19 15h3" />
                 </svg>
                 <span>Memory</span>
-                <strong>4 GB</strong>
+                <strong data-ram-summary>--</strong>
               </article>
             </div>
           </div>
@@ -120,6 +120,14 @@
               <span>Response</span>
               <strong data-latency>-- ms</strong>
               <p data-status-health>API 응답을 기다리고 있습니다.</p>
+            </article>
+            <article class="dashboard-card">
+              <span>Server RAM</span>
+              <strong data-ram-percent>--</strong>
+              <div class="meter dashboard-meter" aria-hidden="true">
+                <span data-ram-meter></span>
+              </div>
+              <p data-ram-detail>Waiting for AuroraLink bridge.</p>
             </article>
             <article class="dashboard-card">
               <span>Players</span>

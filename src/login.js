@@ -714,7 +714,7 @@ async function postStockTrade(side) {
 }
 
 async function requestPlayerVerification(nickname, user) {
-  const apiPayload = await fetchPlayerJson("/verification/start", {
+  const request = {
     method: "POST",
     body: JSON.stringify({
       nickname,
@@ -725,9 +725,10 @@ async function requestPlayerVerification(nickname, user) {
         sub: user?.sub || "",
       },
     }),
-  }).catch(() => null);
-
-  const code = String(apiPayload?.code || generateVerificationCode());
+  };
+  const apiPayload = playerApiBase ? await fetchPlayerJson("/verification/start", request) : null;
+  const code = String(apiPayload?.code || (allowLocalPlayerPreview ? generateVerificationCode() : ""));
+  if (!code) throw new Error("서버 인증 코드 발급 API에 연결하지 못했습니다.");
   return {
     nickname,
     code,
@@ -1212,19 +1213,24 @@ characterForm?.addEventListener("submit", async (event) => {
   }
 
   setCharacterStatus("코드 생성 중");
-  const playerProfile = await requestPlayerVerification(nickname, user);
-  writePlayerProfile(playerProfile, user);
-  renderVerifyCard(playerProfile);
-  renderInventory(null);
-  renderWebActions(playerProfile);
-  renderStockTrader(playerProfile);
-  setCharacterStatus(playerProfile.verified ? "인증 완료" : "인증 확인 필요", playerProfile.verified ? "success" : "idle");
-  if (refreshInventoryButton) refreshInventoryButton.disabled = !playerProfile.verified;
-  if (playerProfile.verified) {
-    loadPlayerInventory(playerProfile, user);
-    loadStockTrader(playerProfile, user);
+  try {
+    const playerProfile = await requestPlayerVerification(nickname, user);
+    writePlayerProfile(playerProfile, user);
+    renderVerifyCard(playerProfile);
+    renderInventory(null);
+    renderWebActions(playerProfile);
+    renderStockTrader(playerProfile);
+    setCharacterStatus(playerProfile.verified ? "인증 완료" : "인증 확인 필요", playerProfile.verified ? "success" : "idle");
+    if (refreshInventoryButton) refreshInventoryButton.disabled = !playerProfile.verified;
+    if (playerProfile.verified) {
+      loadPlayerInventory(playerProfile, user);
+      loadStockTrader(playerProfile, user);
+    }
+    setMessage(`${nickname} 캐릭터 인증 코드를 만들었습니다.`, "success");
+  } catch (error) {
+    setCharacterStatus("코드 생성 실패", "error");
+    setMessage(error?.message || "캐릭터 인증 코드를 만들지 못했습니다.", "error");
   }
-  setMessage(`${nickname} 캐릭터 인증 코드를 만들었습니다.`, "success");
 });
 
 checkCharacterButton?.addEventListener("click", async () => {

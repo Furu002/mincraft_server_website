@@ -69,6 +69,7 @@ VITE_PLAYER_API_BASE=https://api.example.com/minecraft
 
 - `POST /minecraft/verification/start`
 - `POST /minecraft/verification/check`
+- `GET /minecraft/server/overview`
 - `GET /minecraft/players/{nickname}/inventory`
 - `GET /minecraft/stocks/market`
 - `POST /minecraft/stocks/portfolio`

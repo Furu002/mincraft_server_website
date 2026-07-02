@@ -8,6 +8,28 @@ Set the API base URL at build time:
 VITE_PLAYER_API_BASE=https://api.example.com/minecraft
 ```
 
+## Server Overview
+
+```http
+GET /server/overview
+```
+
+Response includes player counts, TPS, and JVM heap memory:
+
+```json
+{
+  "ok": true,
+  "online": true,
+  "memory": {
+    "usedBytes": 2147483648,
+    "freeBytes": 1073741824,
+    "totalBytes": 3221225472,
+    "maxBytes": 4294967296,
+    "usedPercent": 50
+  }
+}
+```
+
 ## Verification
 
 ### Start Verification

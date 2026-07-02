@@ -4,6 +4,7 @@ const SERVER_ADDRESS = "nfoifsb.kr";
 const STATUS_API = `https://api.mcstatus.io/v2/status/java/${SERVER_ADDRESS}`;
 const STATUS_TIMEOUT_MS = 8000;
 const PLAYER_API_BASE = (import.meta.env.VITE_PLAYER_API_BASE || "").replace(/\/$/, "");
+const SERVER_OVERVIEW_TIMEOUT_MS = 6000;
 const STOCK_MARKET_TIMEOUT_MS = 6000;
 
 const statusDot = document.querySelector("[data-status-dot]");
@@ -19,6 +20,10 @@ const latencyLabel = document.querySelector("[data-latency]");
 const statusHealth = document.querySelector("[data-status-health]");
 const playerSummary = document.querySelector("[data-player-summary]");
 const motdLabel = document.querySelector("[data-motd]");
+const ramSummary = document.querySelector("[data-ram-summary]");
+const ramPercent = document.querySelector("[data-ram-percent]");
+const ramMeter = document.querySelector("[data-ram-meter]");
+const ramDetail = document.querySelector("[data-ram-detail]");
 const playerHeads = document.querySelector("[data-player-heads]");
 const playerChart = document.querySelector("[data-player-chart]");
 const sectionLinks = document.querySelectorAll("[data-section-link]");
@@ -75,6 +80,26 @@ function formatStatusTime(timestamp) {
     minute: "2-digit",
     second: "2-digit",
   }).format(new Date(timestamp));
+}
+
+function formatBytes(bytes) {
+  const value = Number(bytes);
+  if (!Number.isFinite(value) || value < 0) return "--";
+
+  const gib = value / 1024 / 1024 / 1024;
+  if (gib >= 1) return `${gib >= 10 ? Math.round(gib) : gib.toFixed(1)} GB`;
+
+  const mib = value / 1024 / 1024;
+  if (mib >= 1) return `${mib >= 10 ? Math.round(mib) : mib.toFixed(1)} MB`;
+
+  return `${Math.round(value)} B`;
+}
+
+function formatPercent(value) {
+  const percent = Number(value);
+  if (!Number.isFinite(percent)) return "--";
+  const rounded = Math.round(percent * 10) / 10;
+  return `${Number.isInteger(rounded) ? rounded.toFixed(0) : rounded.toFixed(1)}%`;
 }
 
 function readStatusCache() {
@@ -232,6 +257,67 @@ function renderStatusData(data, options = {}) {
   if (motdLabel) motdLabel.textContent = getMotdText(data);
   renderPlayerHeads(data);
   renderPlayerChart();
+}
+
+function hasRamWidgets() {
+  return ramSummary || ramPercent || ramMeter || ramDetail;
+}
+
+function renderRamUnavailable(message) {
+  if (ramSummary) ramSummary.textContent = "--";
+  if (ramPercent) ramPercent.textContent = "--";
+  if (ramMeter) ramMeter.style.width = "0%";
+  if (ramDetail) ramDetail.textContent = message;
+}
+
+function renderServerOverview(data) {
+  const memory = data?.memory || {};
+  const usedBytes = Number(memory.usedBytes);
+  const maxBytes = Number(memory.maxBytes);
+  const totalBytes = Number(memory.totalBytes);
+  const freeBytes = Number(memory.freeBytes);
+  const reportedPercent = Number(memory.usedPercent);
+  const calculatedPercent =
+    Number.isFinite(usedBytes) && Number.isFinite(maxBytes) && maxBytes > 0 ? (usedBytes / maxBytes) * 100 : NaN;
+  const usedPercent = Number.isFinite(reportedPercent) ? reportedPercent : calculatedPercent;
+
+  if (!Number.isFinite(usedBytes) || !Number.isFinite(maxBytes) || maxBytes <= 0) {
+    renderRamUnavailable("RAM data is unavailable.");
+    return;
+  }
+
+  const clampedPercent = Math.max(0, Math.min(100, usedPercent));
+  if (ramSummary) ramSummary.textContent = `${formatBytes(usedBytes)} / ${formatBytes(maxBytes)}`;
+  if (ramPercent) ramPercent.textContent = `${formatPercent(clampedPercent)} used`;
+  if (ramMeter) ramMeter.style.width = `${Math.round(clampedPercent)}%`;
+  if (ramDetail) {
+    const allocated = Number.isFinite(totalBytes) ? formatBytes(totalBytes) : "--";
+    const free = Number.isFinite(freeBytes) ? formatBytes(freeBytes) : "--";
+    ramDetail.textContent = `Allocated ${allocated}, free ${free}.`;
+  }
+}
+
+async function refreshServerOverview() {
+  if (!hasRamWidgets()) return;
+  if (!PLAYER_API_BASE) {
+    renderRamUnavailable("Set VITE_PLAYER_API_BASE to show live RAM.");
+    return;
+  }
+
+  const controller = new AbortController();
+  const timer = window.setTimeout(() => controller.abort(), SERVER_OVERVIEW_TIMEOUT_MS);
+  try {
+    const response = await fetch(`${PLAYER_API_BASE}/server/overview`, {
+      cache: "no-store",
+      signal: controller.signal,
+    });
+    if (!response.ok) throw new Error(`server overview ${response.status}`);
+    renderServerOverview(await response.json());
+  } catch {
+    renderRamUnavailable("AuroraLink RAM bridge is unavailable.");
+  } finally {
+    window.clearTimeout(timer);
+  }
 }
 
 async function copyAddress(event) {
@@ -1148,4 +1234,8 @@ deferSceneLoad();
 if (statusDot || cacheState) {
   refreshStatus();
   setInterval(refreshStatus, 60000);
+}
+if (hasRamWidgets()) {
+  refreshServerOverview();
+  setInterval(refreshServerOverview, 60000);
 }

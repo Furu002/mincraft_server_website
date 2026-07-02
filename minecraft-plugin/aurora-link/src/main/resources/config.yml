@@ -14,6 +14,10 @@ verification:
   code-expire-minutes: 10
   web-token-days: 30
 
+webauth-whitelist:
+  enabled: true
+  base-url: "http://127.0.0.1:8124"
+
 stock-market:
   enabled: true
   tick-seconds: 60
