@@ -2918,6 +2918,14 @@ input:focus-visible,
   fill: rgba(17, 118, 66, 0.24);
 }
 
+.stock-exchange .stock-volume-bar.is-up {
+  fill: rgba(17, 118, 66, 0.3);
+}
+
+.stock-exchange .stock-volume-bar.is-down {
+  fill: rgba(183, 45, 58, 0.24);
+}
+
 .stock-exchange .stock-grid-line {
   stroke: rgba(31, 46, 39, 0.12);
 }
@@ -3078,6 +3086,12 @@ input:focus-visible,
   font-weight: 800;
 }
 
+.stock-advanced-orders {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
 .stock-order-side-buttons {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -3165,7 +3179,7 @@ input:focus-visible,
 .stock-order-book,
 .stock-portfolio-list {
   display: grid;
-  gap: 7px;
+  gap: 5px;
   margin: 0;
   padding: 12px;
   list-style: none;
@@ -3173,6 +3187,8 @@ input:focus-visible,
 
 .stock-order-book li,
 .stock-portfolio-list li {
+  position: relative;
+  overflow: hidden;
   display: grid;
   grid-template-columns: minmax(74px, 0.9fr) minmax(0, 1fr) auto;
   gap: 8px;
@@ -3182,6 +3198,27 @@ input:focus-visible,
   border: 1px solid var(--stock-border);
   border-radius: 6px;
   background: var(--stock-panel-soft);
+}
+
+.stock-order-book li::before {
+  position: absolute;
+  inset: 0 0 0 auto;
+  width: var(--depth, 0%);
+  pointer-events: none;
+  content: "";
+}
+
+.stock-order-book li.is-ask::before {
+  background: linear-gradient(90deg, rgba(183, 45, 58, 0), rgba(183, 45, 58, 0.14));
+}
+
+.stock-order-book li.is-bid::before {
+  background: linear-gradient(90deg, rgba(17, 118, 66, 0), rgba(17, 118, 66, 0.16));
+}
+
+.stock-order-book li > * {
+  position: relative;
+  z-index: 1;
 }
 
 .stock-order-book span,
@@ -3198,6 +3235,10 @@ input:focus-visible,
   font-size: 14px;
   font-weight: 950;
   text-align: right;
+}
+
+.stock-order-book .stock-depth-price {
+  text-align: left;
 }
 
 .stock-order-book em,
@@ -3285,6 +3326,151 @@ input:focus-visible,
 .stock-strength-panel [data-stock-strength-value] {
   color: var(--stock-text);
   font-weight: 950;
+}
+
+.stock-depth-tools,
+.stock-depth-head,
+.stock-mid-price,
+.stock-depth-meter,
+.stock-expert-grid,
+.stock-risk-panel {
+  margin: 0 12px;
+}
+
+.stock-depth-tools {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 6px;
+  padding-top: 12px;
+}
+
+.stock-depth-tools button {
+  min-height: 30px;
+  border: 1px solid var(--stock-border);
+  border-radius: 6px;
+  color: var(--stock-muted);
+  background: var(--stock-panel-soft);
+  font-size: 12px;
+  font-weight: 900;
+  cursor: pointer;
+}
+
+.stock-depth-tools button.is-active {
+  color: var(--stock-text);
+  background: rgba(45, 117, 255, 0.14);
+  border-color: rgba(45, 117, 255, 0.38);
+}
+
+.stock-depth-head {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 0.8fr) minmax(0, 0.8fr);
+  gap: 8px;
+  padding-top: 10px;
+  color: var(--stock-muted);
+  font-size: 10px;
+  font-weight: 950;
+  text-transform: uppercase;
+}
+
+.stock-depth-head span:not(:first-child) {
+  text-align: right;
+}
+
+.stock-mid-price {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  min-height: 40px;
+  padding: 8px 10px;
+  border-block: 1px solid var(--stock-border);
+}
+
+.stock-mid-price strong {
+  color: var(--stock-text);
+  font-size: 18px;
+  font-weight: 950;
+}
+
+.stock-mid-price span {
+  color: var(--stock-muted);
+  font-size: 11px;
+  font-weight: 850;
+  text-align: right;
+}
+
+.stock-depth-meter {
+  position: relative;
+  overflow: hidden;
+  height: 30px;
+  margin-bottom: 12px;
+  border-radius: 6px;
+  background: rgba(183, 45, 58, 0.17);
+}
+
+.stock-depth-meter span {
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: 50%;
+  background: rgba(17, 118, 66, 0.26);
+}
+
+.stock-depth-meter em {
+  position: relative;
+  z-index: 1;
+  display: grid;
+  place-items: center;
+  height: 100%;
+  color: var(--stock-text);
+  font-size: 11px;
+  font-style: normal;
+  font-weight: 900;
+}
+
+.stock-expert-grid,
+.stock-risk-panel {
+  display: grid;
+  gap: 8px;
+  padding: 12px 0;
+}
+
+.stock-expert-grid {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.stock-expert-grid span,
+.stock-risk-panel span {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+  padding: 10px;
+  border: 1px solid var(--stock-border);
+  border-radius: 6px;
+  background: var(--stock-panel-soft);
+}
+
+.stock-expert-grid em,
+.stock-risk-panel em {
+  color: var(--stock-muted);
+  font-size: 11px;
+  font-style: normal;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
+.stock-expert-grid strong,
+.stock-risk-panel strong {
+  color: var(--stock-text);
+  font-size: 15px;
+  font-weight: 950;
+}
+
+[data-stock-expert-signal].is-buy {
+  color: var(--stock-green);
+}
+
+[data-stock-expert-signal].is-sell {
+  color: var(--stock-red);
 }
 
 .stock-portfolio-panel .stock-board-heading span:last-child {
@@ -3512,14 +3698,40 @@ input:focus-visible,
     grid-template-columns: 1fr;
   }
 
+  .stock-advanced-orders,
+  .stock-expert-grid {
+    grid-template-columns: 1fr;
+  }
+
   .stock-order-book li,
   .stock-portfolio-list li {
     grid-template-columns: 1fr auto;
   }
 
+  .stock-depth-panel .stock-order-book li {
+    grid-template-columns: minmax(0, 1fr) minmax(64px, 0.72fr) minmax(64px, 0.72fr);
+  }
+
   .stock-order-book em,
   .stock-portfolio-list em {
     grid-column: 1 / -1;
+  }
+
+  .stock-depth-panel .stock-order-book em {
+    grid-column: auto;
+  }
+
+  .stock-depth-head {
+    grid-template-columns: minmax(0, 1fr) minmax(64px, 0.72fr) minmax(64px, 0.72fr);
+  }
+
+  .stock-mid-price {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .stock-mid-price span {
+    text-align: left;
   }
 
   .stock-chart-shell {

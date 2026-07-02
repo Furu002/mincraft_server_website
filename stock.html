@@ -71,7 +71,7 @@
             </div>
           </div>
 
-          <div class="stock-exchange stock-exchange-page stock-pro-terminal" data-reveal data-stock-exchange>
+          <div class="stock-exchange stock-exchange-page stock-pro-terminal" data-stock-exchange>
             <div class="stock-ticker" data-stock-ticker aria-label="실시간 종목 요약">
               <button type="button" data-stock-code="DMD">
                 <strong>DMD</strong>
@@ -212,6 +212,8 @@
                     <select data-stock-order-type>
                       <option value="market">시장가 즉시체결</option>
                       <option value="limit">지정가 예약</option>
+                      <option value="stop-limit">스탑 지정가</option>
+                      <option value="oco">OCO TP/SL</option>
                     </select>
                   </label>
                   <label>
@@ -222,6 +224,39 @@
                     <span>지정가</span>
                     <input data-stock-order-limit type="number" min="1" step="1" placeholder="KRW 현재가 기준" inputmode="numeric" />
                   </label>
+                  <label>
+                    <span>레버리지</span>
+                    <select data-stock-order-leverage>
+                      <option value="1">1x 현물</option>
+                      <option value="2">2x</option>
+                      <option value="3">3x</option>
+                      <option value="5">5x 고위험</option>
+                    </select>
+                  </label>
+                  <div class="stock-advanced-orders" aria-label="전문가 주문 옵션">
+                    <label>
+                      <span>TP</span>
+                      <input data-stock-order-take-profit type="number" min="1" step="1" placeholder="익절가" inputmode="numeric" />
+                    </label>
+                    <label>
+                      <span>SL</span>
+                      <input data-stock-order-stop-loss type="number" min="1" step="1" placeholder="손절가" inputmode="numeric" />
+                    </label>
+                    <label>
+                      <span>POST</span>
+                      <select data-stock-order-post-only>
+                        <option value="off">Off</option>
+                        <option value="on">Post only</option>
+                      </select>
+                    </label>
+                    <label>
+                      <span>감소</span>
+                      <select data-stock-order-reduce-only>
+                        <option value="off">Off</option>
+                        <option value="on">Reduce only</option>
+                      </select>
+                    </label>
+                  </div>
                   <div class="stock-order-estimate" data-stock-order-estimate></div>
                   <button class="stock-order-submit" type="submit" data-stock-order-submit disabled>
                     <span data-stock-order-side-label>매수</span> 주문 전송
@@ -234,10 +269,29 @@
 
               <aside class="stock-panel stock-depth-panel" aria-label="호가창">
                 <div class="stock-board-heading">
-                  <span>호가창</span>
+                  <span>오더북</span>
+                  <span data-stock-depth-ratio>매수 50%</span>
+                </div>
+                <div class="stock-depth-tools" aria-label="호가 설정">
+                  <button type="button" class="is-active" data-stock-depth-group="1">1</button>
+                  <button type="button" data-stock-depth-group="5">5</button>
+                  <button type="button" data-stock-depth-group="10">10</button>
+                </div>
+                <div class="stock-depth-head" aria-hidden="true">
+                  <span>가격(KRW)</span>
                   <span>수량</span>
+                  <span>누적</span>
+                </div>
+                <ul class="stock-order-book stock-order-book-asks" data-stock-order-asks></ul>
+                <div class="stock-mid-price" data-stock-mid-price>
+                  <strong>₩3,420</strong>
+                  <span>스프레드 --</span>
                 </div>
                 <ul class="stock-order-book" data-stock-order-book></ul>
+                <div class="stock-depth-meter" data-stock-depth-meter>
+                  <span style="width: 50%"></span>
+                  <em>매수 압력 50%</em>
+                </div>
               </aside>
 
               <section class="stock-panel stock-table-panel" aria-label="서버 주식 시세표">
@@ -287,6 +341,24 @@
                 <ul class="stock-portfolio-list" data-stock-portfolio>
                   <li class="is-empty"><span>보유 종목 없음</span><strong>--</strong></li>
                 </ul>
+              </section>
+
+              <section class="stock-panel stock-expert-panel" aria-label="전문가 지표">
+                <div class="stock-board-heading">
+                  <span>전문가 지표</span>
+                  <span data-stock-expert-signal>중립</span>
+                </div>
+                <div class="stock-expert-grid" data-stock-expert-metrics>
+                  <span><em>RSI</em><strong>--</strong></span>
+                  <span><em>MACD</em><strong>--</strong></span>
+                  <span><em>변동성</em><strong>--</strong></span>
+                  <span><em>VWAP 괴리</em><strong>--</strong></span>
+                </div>
+                <div class="stock-risk-panel" data-stock-risk-panel>
+                  <span><em>예상 청산가</em><strong>--</strong></span>
+                  <span><em>위험도</em><strong>--</strong></span>
+                  <span><em>오더북 압력</em><strong>--</strong></span>
+                </div>
               </section>
             </div>
           </div>

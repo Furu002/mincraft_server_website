@@ -1141,6 +1141,54 @@ function vwapSeries(series) {
   });
 }
 
+function emaSeries(values, period) {
+  const multiplier = 2 / (period + 1);
+  let previous = Number(values[0]) || 0;
+  return values.map((value, index) => {
+    const number = Number(value) || previous;
+    previous = index === 0 ? number : number * multiplier + previous * (1 - multiplier);
+    return previous;
+  });
+}
+
+function relativeStrengthIndex(values, period = 14) {
+  if (!Array.isArray(values) || values.length < 2) return 50;
+  const slice = values.slice(-period - 1);
+  let gains = 0;
+  let losses = 0;
+  for (let index = 1; index < slice.length; index += 1) {
+    const change = Number(slice[index]) - Number(slice[index - 1]);
+    if (change >= 0) gains += change;
+    else losses += Math.abs(change);
+  }
+  if (losses === 0) return 100;
+  const rs = gains / Math.max(0.0001, losses);
+  return 100 - 100 / (1 + rs);
+}
+
+function stockVolatility(values) {
+  if (!Array.isArray(values) || values.length < 3) return 0;
+  const returns = values.slice(1).map((value, index) => (Number(value) - Number(values[index])) / Math.max(1, Number(values[index])));
+  const average = returns.reduce((sum, value) => sum + value, 0) / returns.length;
+  const variance = returns.reduce((sum, value) => sum + (value - average) ** 2, 0) / returns.length;
+  return Math.sqrt(variance) * Math.sqrt(returns.length) * 100;
+}
+
+function stockTechnicalMetrics(stock, tick, range) {
+  const series = stockSeries(stock, tick, range);
+  const closes = series.map((point) => Number(point.close || point.price));
+  const last = closes.at(-1) || Number(stock?.price) || 0;
+  const ema12 = emaSeries(closes, 12);
+  const ema26 = emaSeries(closes, 26);
+  const macd = (ema12.at(-1) || last) - (ema26.at(-1) || last);
+  const signal = emaSeries(ema12.map((value, index) => value - (ema26[index] || value)), 9).at(-1) || 0;
+  const vwap = vwapSeries(series).at(-1) || last;
+  const rsi = relativeStrengthIndex(closes);
+  const volatility = stockVolatility(closes);
+  const vwapGap = vwap ? ((last - vwap) / vwap) * 100 : 0;
+  return { rsi, macd, signal, volatility, vwapGap, price: last };
+}
+
 function renderStockChart(svg, stock, tick, selectedRange = "24H", options = {}) {
   const series = stockSeries(stock, tick, selectedRange);
   const basePrice = Math.max(1, Number(series[0]?.price) || 1);
@@ -1192,9 +1240,10 @@ function renderStockChart(svg, stock, tick, selectedRange = "24H", options = {})
 
   series.forEach((point, index) => {
     const barHeight = Math.max(2, ((Number(point.volume) || 0) / maxVolume) * 48);
+    const volumeUp = Number(point.close || point.price) >= Number(point.open || point.price);
     svg.append(
       createSvg("rect", {
-        class: "stock-volume-bar",
+        class: volumeUp ? "stock-volume-bar is-up" : "stock-volume-bar is-down",
         x: toX(index) - 3,
         y: volumeBottom - barHeight,
         width: 6,
@@ -1462,42 +1511,88 @@ function renderStockDetail(elements, stock, result) {
   if (elements.time) elements.time.textContent = formatStockTime(latestStockTime(stock));
 }
 
-function renderStockOrderBook(book, stock) {
-  if (!book || !stock) return;
+function buildStockDepth(stock, groupSize = 1) {
   const price = Math.max(1, Number(stock.price) || 1);
   const volume = Math.max(10, Number(stock.volume24h) || 1200);
-  const spread = Math.max(1, price * 0.0025);
-  const levels = Array.from({ length: 6 }, (_, index) => {
+  const group = Math.max(1, Number(groupSize) || 1);
+  const spread = Math.max(group, price * 0.0025);
+  const bestAsk = Math.ceil((price + spread / 2) / group) * group;
+  const bestBid = Math.max(group, Math.floor((price - spread / 2) / group) * group);
+  const asks = [];
+  const bids = [];
+
+  Array.from({ length: 8 }, (_, index) => {
     const step = index + 1;
-    const size = Math.round((volume / 96) * (1 + Math.sin(price * 0.01 + step) * 0.28 + step * 0.08));
-    return {
-      ask: price + spread * step,
-      bid: price - spread * step,
-      askSize: Math.max(1, size),
-      bidSize: Math.max(1, Math.round(size * (0.9 + step * 0.03))),
-    };
+    const askQuantity = Math.max(1, Math.round((volume / 118) * (1 + Math.sin(price * 0.01 + step) * 0.28 + step * 0.09)));
+    const bidQuantity = Math.max(1, Math.round((volume / 118) * (1 + Math.cos(price * 0.012 + step) * 0.24 + step * 0.1)));
+    asks.push({ side: "ask", price: bestAsk + group * (step - 1), quantity: askQuantity });
+    bids.push({ side: "bid", price: Math.max(group, bestBid - group * (step - 1)), quantity: bidQuantity });
   });
 
-  book.replaceChildren(
-    ...levels
-      .map((level) => [
-        { side: "ask", price: level.ask, quantity: level.askSize },
-        { side: "bid", price: level.bid, quantity: level.bidSize },
-      ])
-      .flat()
-      .map((level) => {
-        const row = document.createElement("li");
-        row.className = level.side === "ask" ? "is-ask" : "is-bid";
-        const label = document.createElement("span");
-        label.textContent = level.side === "ask" ? "매도호가" : "매수호가";
-        const value = document.createElement("strong");
-        value.textContent = formatStockKrw(level.price);
-        const quantity = document.createElement("em");
-        quantity.textContent = `${formatStockNumber(level.quantity)}주`;
-        row.append(label, value, quantity);
-        return row;
-      }),
-  );
+  let askTotal = 0;
+  let bidTotal = 0;
+  asks.forEach((level) => {
+    askTotal += level.quantity;
+    level.total = askTotal;
+  });
+  bids.forEach((level) => {
+    bidTotal += level.quantity;
+    level.total = bidTotal;
+  });
+
+  const bestAskPrice = asks[0]?.price || price;
+  const bestBidPrice = bids[0]?.price || price;
+  const realSpread = Math.max(0, bestAskPrice - bestBidPrice);
+  const mid = (bestAskPrice + bestBidPrice) / 2;
+  const bidRatio = Math.round((bidTotal / Math.max(1, bidTotal + askTotal)) * 100);
+  const maxTotal = Math.max(1, askTotal, bidTotal);
+  return { asks, bids, askTotal, bidTotal, bidRatio, spread: realSpread, spreadPercent: (realSpread / Math.max(1, mid)) * 100, mid, maxTotal };
+}
+
+function renderDepthLevels(list, levels, maxTotal, reverse = false) {
+  if (!list) return;
+  const rows = (reverse ? [...levels].reverse() : levels).map((level) => {
+    const row = document.createElement("li");
+    row.className = level.side === "ask" ? "is-ask" : "is-bid";
+    row.style.setProperty("--depth", `${Math.max(6, (Number(level.total || 0) / Math.max(1, maxTotal)) * 100).toFixed(1)}%`);
+
+    const price = document.createElement("strong");
+    price.className = "stock-depth-price";
+    price.textContent = formatStockKrw(level.price);
+    const quantity = document.createElement("span");
+    quantity.textContent = `${formatStockNumber(level.quantity)}주`;
+    const total = document.createElement("em");
+    total.textContent = `${formatStockNumber(level.total)}주`;
+    row.append(price, quantity, total);
+    return row;
+  });
+  list.replaceChildren(...rows);
+}
+
+function renderStockOrderBook(book, stock, options = {}) {
+  if (!stock) return null;
+  const depth = buildStockDepth(stock, options.groupSize);
+  renderDepthLevels(options.asksBook, depth.asks, depth.maxTotal, true);
+  renderDepthLevels(book, depth.bids, depth.maxTotal);
+
+  if (options.midPrice) {
+    options.midPrice.replaceChildren();
+    const price = document.createElement("strong");
+    price.textContent = formatStockKrw(depth.mid);
+    const spread = document.createElement("span");
+    spread.textContent = `스프레드 ${formatStockKrw(depth.spread)} · ${depth.spreadPercent.toFixed(2)}%`;
+    options.midPrice.append(price, spread);
+  }
+  if (options.ratioLabel) {
+    options.ratioLabel.textContent = `매수 ${depth.bidRatio}%`;
+  }
+  if (options.depthMeter) {
+    const fill = options.depthMeter.querySelector("span");
+    const label = options.depthMeter.querySelector("em");
+    if (fill) fill.style.width = `${depth.bidRatio}%`;
+    if (label) label.textContent = `매수 압력 ${depth.bidRatio}% · 매도 ${100 - depth.bidRatio}%`;
+  }
+  return depth;
 }
 
 function renderStockPortfolio(list, balanceLabel, portfolio, market) {
@@ -1534,6 +1629,96 @@ function renderStockPortfolio(list, balanceLabel, portfolio, market) {
   );
 }
 
+function formatMetricPercent(value) {
+  const number = Number(value);
+  if (!Number.isFinite(number)) return "--";
+  return `${number >= 0 ? "+" : ""}${number.toFixed(2)}%`;
+}
+
+function expertSignal(metrics, depth) {
+  let score = 0;
+  if (metrics.rsi < 35) score += 1;
+  if (metrics.rsi > 70) score -= 1;
+  if (metrics.macd > metrics.signal) score += 1;
+  if (metrics.macd < metrics.signal) score -= 1;
+  if (metrics.vwapGap > 0) score += 1;
+  if (metrics.vwapGap < 0) score -= 1;
+  if ((depth?.bidRatio || 50) >= 58) score += 1;
+  if ((depth?.bidRatio || 50) <= 42) score -= 1;
+  if (score >= 3) return { label: "강한 매수", tone: "buy" };
+  if (score >= 1) return { label: "매수 우위", tone: "buy" };
+  if (score <= -3) return { label: "강한 매도", tone: "sell" };
+  if (score <= -1) return { label: "매도 우위", tone: "sell" };
+  return { label: "중립", tone: "neutral" };
+}
+
+function liquidationPrice(price, leverage, side) {
+  const entry = Number(price);
+  const lev = Number(leverage);
+  if (!Number.isFinite(entry) || !Number.isFinite(lev) || lev <= 1) return null;
+  const maintenance = 0.006;
+  const move = 1 / lev - maintenance;
+  return side === "sell" ? entry * (1 + move) : entry * (1 - move);
+}
+
+function orderRiskLabel(leverage, volatility, depth) {
+  const lev = Number(leverage) || 1;
+  const vol = Number(volatility) || 0;
+  const imbalance = Math.abs((Number(depth?.bidRatio) || 50) - 50);
+  const score = lev * 0.9 + vol * 0.55 + imbalance * 0.06;
+  if (score >= 10) return "매우 높음";
+  if (score >= 6) return "높음";
+  if (score >= 3.5) return "중간";
+  return "낮음";
+}
+
+function renderExpertPanel(elements, metrics, depth, stock, orderElements, activeSide) {
+  if (!elements.metrics && !elements.signal && !elements.risk) return;
+  const signal = expertSignal(metrics, depth);
+  if (elements.signal) {
+    elements.signal.textContent = signal.label;
+    elements.signal.classList.toggle("is-buy", signal.tone === "buy");
+    elements.signal.classList.toggle("is-sell", signal.tone === "sell");
+  }
+
+  if (elements.metrics) {
+    const macdGap = Number(metrics.macd) - Number(metrics.signal);
+    const items = [
+      ["RSI", metrics.rsi.toFixed(1)],
+      ["MACD", formatStockSignedKrw(macdGap)],
+      ["변동성", `${metrics.volatility.toFixed(2)}%`],
+      ["VWAP 괴리", formatMetricPercent(metrics.vwapGap)],
+    ];
+    elements.metrics.replaceChildren(
+      ...items.map(([label, value]) => {
+        const item = document.createElement("span");
+        item.innerHTML = `<em>${label}</em><strong>${value}</strong>`;
+        return item;
+      }),
+    );
+  }
+
+  if (elements.risk) {
+    const price = Math.max(1, Number(stock?.price) || metrics.price || 1);
+    const leverage = Math.max(1, Math.min(5, Number(orderElements?.leverage?.value || 1)));
+    const liq = liquidationPrice(price, leverage, activeSide);
+    const risk = orderRiskLabel(leverage, metrics.volatility, depth);
+    const pressure = `매수 ${depth?.bidRatio ?? 50}%`;
+    const rows = [
+      ["예상 청산가", liq ? formatStockKrw(liq) : "현물 없음"],
+      ["위험도", risk],
+      ["오더북 압력", pressure],
+    ];
+    elements.risk.replaceChildren(
+      ...rows.map(([label, value]) => {
+        const item = document.createElement("span");
+        item.innerHTML = `<em>${label}</em><strong>${value}</strong>`;
+        return item;
+      }),
+    );
+  }
+}
+
 function setTradeMessage(element, text, tone = "info") {
   if (!element) return;
   element.textContent = text;
@@ -1541,19 +1726,26 @@ function setTradeMessage(element, text, tone = "info") {
   element.classList.toggle("is-success", tone === "success");
 }
 
-function renderOrderTicket(elements, stock, side, playerProfile, portfolio, liveMarket = false, loading = false) {
+function renderOrderTicket(elements, stock, side, playerProfile, portfolio, liveMarket = false, loading = false, expert = {}) {
   if (!elements?.root || !stock) return;
   const quantity = Math.max(1, Math.floor(Number(elements.quantity?.value || 1)));
   const price = Math.max(1, Number(stock.price) || 1);
   const orderType = elements.type?.value || "market";
   const limitPrice = Math.max(0, Number(elements.limit?.value || 0));
-  const executionPrice = orderType === "limit" && limitPrice > 0 ? limitPrice : price;
+  const usesLimitPrice = ["limit", "stop-limit", "oco"].includes(orderType);
+  const executionPrice = usesLimitPrice && limitPrice > 0 ? limitPrice : price;
+  const leverage = Math.max(1, Math.min(5, Number(elements.leverage?.value || 1)));
+  const takeProfit = Math.max(0, Number(elements.takeProfit?.value || 0));
+  const stopLoss = Math.max(0, Number(elements.stopLoss?.value || 0));
   const feeRate = 0.003;
   const notional = executionPrice * quantity;
+  const margin = notional / leverage;
   const fee = notional * feeRate;
-  const total = side === "sell" ? notional - fee : notional + fee;
+  const total = side === "sell" ? notional - fee : margin + fee;
   const position = stockPosition(portfolio, stockCode(stock));
   const canTrade = Boolean(playerProfile?.verified && playerProfile?.webToken && PLAYER_API_BASES.length && liveMarket && stock && !loading);
+  const liq = liquidationPrice(executionPrice, leverage, side);
+  const risk = orderRiskLabel(leverage, expert.metrics?.volatility, expert.depth);
 
   if (elements.symbol) elements.symbol.textContent = stockCode(stock);
   if (elements.side) elements.side.textContent = side === "sell" ? "매도" : "매수";
@@ -1562,9 +1754,14 @@ function renderOrderTicket(elements, stock, side, playerProfile, portfolio, live
     [
       ["예상 체결가", formatStockKrw(executionPrice)],
       ["주문 수량", `${formatStockNumber(quantity)}주`],
+      ["레버리지", `${leverage}x`],
       ["주문 금액", formatStockKrw(notional)],
+      ["필요 증거금", formatStockKrw(margin)],
       ["수수료", formatStockKrw(fee)],
       [side === "sell" ? "예상 입금" : "예상 필요", formatStockKrw(total)],
+      ["청산가", liq ? formatStockKrw(liq) : "현물 없음"],
+      ["위험도", risk],
+      ["TP / SL", `${takeProfit ? formatStockKrw(takeProfit) : "--"} / ${stopLoss ? formatStockKrw(stopLoss) : "--"}`],
       ["보유", position ? `${formatStockNumber(position.shares ?? position.quantity ?? 0)}주` : "0주"],
     ].forEach(([label, value]) => {
       const item = document.createElement("span");
@@ -1631,6 +1828,16 @@ function initStockExchange() {
     buy: document.querySelector("[data-stock-strength-buy]"),
     sell: document.querySelector("[data-stock-strength-sell]"),
   };
+  const orderAsks = document.querySelector("[data-stock-order-asks]");
+  const depthRatio = document.querySelector("[data-stock-depth-ratio]");
+  const depthMid = document.querySelector("[data-stock-mid-price]");
+  const depthMeter = document.querySelector("[data-stock-depth-meter]");
+  const depthGroupButtons = document.querySelectorAll("[data-stock-depth-group]");
+  const expertElements = {
+    signal: document.querySelector("[data-stock-expert-signal]"),
+    metrics: document.querySelector("[data-stock-expert-metrics]"),
+    risk: document.querySelector("[data-stock-risk-panel]"),
+  };
   const portfolioList = document.querySelector("[data-stock-portfolio]");
   const portfolioBalance = document.querySelector("[data-stock-portfolio-balance]");
   const orderForm = document.querySelector("[data-stock-order-form]");
@@ -1639,6 +1846,11 @@ function initStockExchange() {
     quantity: document.querySelector("[data-stock-order-quantity]"),
     type: document.querySelector("[data-stock-order-type]"),
     limit: document.querySelector("[data-stock-order-limit]"),
+    leverage: document.querySelector("[data-stock-order-leverage]"),
+    takeProfit: document.querySelector("[data-stock-order-take-profit]"),
+    stopLoss: document.querySelector("[data-stock-order-stop-loss]"),
+    postOnly: document.querySelector("[data-stock-order-post-only]"),
+    reduceOnly: document.querySelector("[data-stock-order-reduce-only]"),
     symbol: document.querySelector("[data-stock-order-symbol]"),
     side: document.querySelector("[data-stock-order-side-label]"),
     estimate: document.querySelector("[data-stock-order-estimate]"),
@@ -1653,6 +1865,7 @@ function initStockExchange() {
   let activeSort = "market";
   let activeMode = document.querySelector("[data-stock-chart-mode].is-active")?.dataset.stockChartMode || "line";
   let activeScale = document.querySelector("[data-stock-scale].is-active")?.dataset.stockScale || "price";
+  let activeDepthGroup = Number(document.querySelector("[data-stock-depth-group].is-active")?.dataset.stockDepthGroup || 1);
   let activeIndicators = new Set(
     Array.from(document.querySelectorAll("[data-stock-indicator].is-active")).map(
       (button) => button.dataset.stockIndicator,
@@ -1682,6 +1895,7 @@ function initStockExchange() {
       scale: activeScale,
       indicators: activeIndicators,
     });
+    const metrics = stockTechnicalMetrics(stock, tick, activeRange);
     const marketMeta = market?.market || {};
 
     root.classList.toggle("is-live", liveMarket);
@@ -1724,6 +1938,9 @@ function initStockExchange() {
       button.classList.toggle("is-active", activeIndicators.has(button.dataset.stockIndicator));
     });
     if (axisStart) axisStart.textContent = activeRange === "ALL" ? "전체" : `${activeRange} 전`;
+    depthGroupButtons.forEach((button) => {
+      button.classList.toggle("is-active", Number(button.dataset.stockDepthGroup || 1) === activeDepthGroup);
+    });
     sideButtons.forEach((button) => {
       button.classList.toggle("is-active", button.dataset.stockOrderSide === activeSide);
     });
@@ -1734,9 +1951,16 @@ function initStockExchange() {
     renderStockTape(tape, trades.length ? trades : market?.recentTrades);
     renderStockDetail(detailElements, stock, result);
     renderStockStrength(strengthElements, stock, trades);
-    renderStockOrderBook(orderBook, stock);
+    const depth = renderStockOrderBook(orderBook, stock, {
+      asksBook: orderAsks,
+      ratioLabel: depthRatio,
+      midPrice: depthMid,
+      depthMeter,
+      groupSize: activeDepthGroup,
+    });
     renderStockPortfolio(portfolioList, portfolioBalance, portfolio, market);
-    renderOrderTicket(orderElements, stock, activeSide, playerProfile, portfolio, liveMarket, orderLoading);
+    renderExpertPanel(expertElements, metrics, depth, stock, orderElements, activeSide);
+    renderOrderTicket(orderElements, stock, activeSide, playerProfile, portfolio, liveMarket, orderLoading, { metrics, depth });
   }
 
   async function refreshMarket() {
@@ -1827,13 +2051,28 @@ function initStockExchange() {
       render();
     });
   });
+  depthGroupButtons.forEach((button) => {
+    button.addEventListener("click", () => {
+      activeDepthGroup = Math.max(1, Number(button.dataset.stockDepthGroup || 1));
+      render();
+    });
+  });
   sideButtons.forEach((button) => {
     button.addEventListener("click", () => {
       activeSide = button.dataset.stockOrderSide || "buy";
       render();
     });
   });
-  [orderElements.quantity, orderElements.type, orderElements.limit]
+  [
+    orderElements.quantity,
+    orderElements.type,
+    orderElements.limit,
+    orderElements.leverage,
+    orderElements.takeProfit,
+    orderElements.stopLoss,
+    orderElements.postOnly,
+    orderElements.reduceOnly,
+  ]
     .filter(Boolean)
     .forEach((element) => {
       element.addEventListener("input", render);
@@ -1845,6 +2084,10 @@ function initStockExchange() {
     const quantity = Math.max(1, Math.floor(Number(orderElements.quantity?.value || 1)));
     const orderType = orderElements.type?.value || "market";
     const limitPrice = Math.max(0, Number(orderElements.limit?.value || 0));
+    const usesLimitPrice = ["limit", "stop-limit", "oco"].includes(orderType);
+    const leverage = Math.max(1, Math.min(5, Number(orderElements.leverage?.value || 1)));
+    const takeProfit = Math.max(0, Number(orderElements.takeProfit?.value || 0));
+    const stopLoss = Math.max(0, Number(orderElements.stopLoss?.value || 0));
     const sideLabel = activeSide === "buy" ? "매수" : "매도";
     playerProfile = currentPlayerProfile();
     orderLoading = true;
@@ -1853,7 +2096,12 @@ function initStockExchange() {
     try {
       const payload = await submitStockTrade(playerProfile, stockCode(stock), activeSide, quantity, {
         orderType,
-        limitPrice: orderType === "limit" && limitPrice > 0 ? limitPrice : undefined,
+        limitPrice: usesLimitPrice && limitPrice > 0 ? limitPrice : undefined,
+        leverage,
+        takeProfit: takeProfit > 0 ? takeProfit : undefined,
+        stopLoss: stopLoss > 0 ? stopLoss : undefined,
+        postOnly: orderElements.postOnly?.value === "on",
+        reduceOnly: orderElements.reduceOnly?.value === "on",
       });
       if (payload?.market?.ok) {
         market = payload.market;
