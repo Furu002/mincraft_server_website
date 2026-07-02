@@ -53,6 +53,7 @@ const originRequestPolicyAllViewerExceptHostHeader = "b689b0a8-53d0-40ab-baf2-68
 const securityHeadersPolicyName = "nfoifsb-site-security-headers";
 const siteDomain = process.env.SITE_DOMAIN || "";
 const certificateArn = process.env.CERTIFICATE_ARN || "";
+const emptyOriginCustomHeaders = { Quantity: 0 };
 
 if (!existsSync(distDir)) {
   throw new Error("dist folder is missing. Run npm run build first.");
@@ -301,6 +302,7 @@ async function syncDistributionDefaults(distributionId, bucket, oacId, responseH
     Id: originId,
     DomainName: desiredDomainName,
     OriginPath: "",
+    CustomHeaders: existingOrigin.CustomHeaders || emptyOriginCustomHeaders,
     OriginAccessControlId: oacId,
     S3OriginConfig: {
       OriginAccessIdentity: "",
@@ -371,6 +373,7 @@ function playerApiOrigin(existingOrigin = {}) {
     Id: playerApiOriginId,
     DomainName: playerApiOriginDomainName,
     OriginPath: "",
+    CustomHeaders: existingOrigin.CustomHeaders || emptyOriginCustomHeaders,
     CustomOriginConfig: {
       HTTPPort: 80,
       HTTPSPort: 443,
@@ -436,6 +439,7 @@ async function ensureDistribution(bucket, oacId, responseHeadersPolicyId) {
             {
               Id: originId,
               DomainName: `${bucket}.s3.${region}.amazonaws.com`,
+              CustomHeaders: emptyOriginCustomHeaders,
               OriginAccessControlId: oacId,
               S3OriginConfig: {
                 OriginAccessIdentity: "",
