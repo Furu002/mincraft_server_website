@@ -15,6 +15,78 @@ data "aws_cloudfront_cache_policy" "caching_optimized" {
   name = "Managed-CachingOptimized"
 }
 
+resource "aws_cloudfront_response_headers_policy" "security" {
+  name    = "nfoifsb-site-security-headers"
+  comment = "Security headers for nfoifsb Minecraft website"
+
+  security_headers_config {
+    content_security_policy {
+      override = true
+      content_security_policy = join("; ", [
+        "default-src 'self'",
+        "base-uri 'self'",
+        "object-src 'none'",
+        "frame-ancestors 'none'",
+        "script-src 'self' 'unsafe-inline' https://accounts.google.com/gsi/client",
+        "style-src 'self' 'unsafe-inline'",
+        "img-src 'self' data: https://mc-heads.net https://*.googleusercontent.com",
+        "font-src 'self' data:",
+        "connect-src 'self' https://api.mcstatus.io https://accounts.google.com https://*.execute-api.ap-northeast-1.amazonaws.com https://api.nfoifsb.kr",
+        "frame-src https://accounts.google.com",
+        "form-action 'self'",
+        "upgrade-insecure-requests",
+      ])
+    }
+
+    content_type_options {
+      override = true
+    }
+
+    frame_options {
+      override     = true
+      frame_option = "DENY"
+    }
+
+    referrer_policy {
+      override        = true
+      referrer_policy = "strict-origin-when-cross-origin"
+    }
+
+    strict_transport_security {
+      override                   = true
+      access_control_max_age_sec = 31536000
+      include_subdomains         = true
+      preload                    = false
+    }
+
+    xss_protection {
+      override   = true
+      protection = true
+      mode_block = true
+    }
+  }
+
+  custom_headers_config {
+    items {
+      header   = "Permissions-Policy"
+      value    = "camera=(), microphone=(), geolocation=(), payment=(), usb=()"
+      override = true
+    }
+
+    items {
+      header   = "Cross-Origin-Opener-Policy"
+      value    = "same-origin-allow-popups"
+      override = true
+    }
+
+    items {
+      header   = "Cross-Origin-Resource-Policy"
+      value    = "same-site"
+      override = true
+    }
+  }
+}
+
 resource "aws_s3_bucket" "site" {
   bucket = local.bucket_name
 }
@@ -62,7 +134,8 @@ resource "aws_cloudfront_distribution" "site" {
     allowed_methods        = ["GET", "HEAD", "OPTIONS"]
     cached_methods         = ["GET", "HEAD"]
     compress               = true
-    cache_policy_id        = data.aws_cloudfront_cache_policy.caching_optimized.id
+    cache_policy_id            = data.aws_cloudfront_cache_policy.caching_optimized.id
+    response_headers_policy_id = aws_cloudfront_response_headers_policy.security.id
   }
 
   custom_error_response {

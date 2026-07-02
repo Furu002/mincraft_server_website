@@ -25,6 +25,7 @@ const allowedOrigins = (process.env.AUTH_ALLOWED_ORIGINS || "")
   .map((origin) => origin.trim())
   .filter(Boolean);
 const passwordIterations = Number(process.env.PASSWORD_ITERATIONS || 210000);
+const maxBodyBytes = Number(process.env.AUTH_MAX_BODY_BYTES || 16 * 1024);
 const emailFrom = process.env.AUTH_EMAIL_FROM || process.env.EMAIL_FROM || "";
 const appBaseUrl = (
   process.env.AUTH_APP_BASE_URL ||
@@ -38,13 +39,20 @@ let googleKeyCache = {
   keys: [],
 };
 
-function corsOrigin(origin) {
-  if (!origin) return allowedOrigins[0] || "*";
-  if (allowedOrigins.includes("*") || allowedOrigins.includes(origin)) return origin;
-  return allowedOrigins[0] || origin;
+const localRateLimits = new Map();
+
+function isAllowedOrigin(origin) {
+  if (!origin || allowedOrigins.length === 0 || allowedOrigins.includes("*")) return true;
+  return allowedOrigins.includes(origin);
 }
 
-function response(statusCode, body, origin) {
+function corsOrigin(origin) {
+  if (!origin) return allowedOrigins[0] || "*";
+  if (isAllowedOrigin(origin)) return allowedOrigins.includes("*") ? origin : origin;
+  return allowedOrigins[0] || "null";
+}
+
+function response(statusCode, body, origin, extraHeaders = {}) {
   return {
     statusCode,
     headers: {
@@ -52,17 +60,37 @@ function response(statusCode, body, origin) {
       "Access-Control-Allow-Headers": "Content-Type, Authorization",
       "Access-Control-Allow-Methods": "OPTIONS, POST",
       "Cache-Control": "no-store",
+      "Content-Security-Policy": "default-src 'none'; frame-ancestors 'none'; base-uri 'none'",
       "Content-Type": "application/json; charset=utf-8",
+      "Cross-Origin-Resource-Policy": "same-site",
+      "Referrer-Policy": "no-referrer",
+      "Strict-Transport-Security": "max-age=31536000; includeSubDomains",
       Vary: "Origin",
+      "X-Content-Type-Options": "nosniff",
+      "X-Frame-Options": "DENY",
+      ...extraHeaders,
     },
     body: JSON.stringify(body),
   };
 }
 
+function clientError(statusCode, message) {
+  const error = new Error(message);
+  error.statusCode = statusCode;
+  return error;
+}
+
 function readBody(event) {
   if (!event.body) return {};
   const raw = event.isBase64Encoded ? Buffer.from(event.body, "base64").toString("utf8") : event.body;
-  return JSON.parse(raw);
+  if (Buffer.byteLength(raw, "utf8") > maxBodyBytes) {
+    throw clientError(413, "요청 본문이 너무 큽니다.");
+  }
+  try {
+    return JSON.parse(raw);
+  } catch {
+    throw clientError(400, "JSON 요청 형식이 올바르지 않습니다.");
+  }
 }
 
 function normalizeEmail(value) {
@@ -93,6 +121,12 @@ function b(value) {
   return { BOOL: Boolean(value) };
 }
 
+function sourceIp(event) {
+  const gatewayIp = event.requestContext?.http?.sourceIp;
+  const forwardedFor = event.headers?.["x-forwarded-for"] || event.headers?.["X-Forwarded-For"];
+  return String(gatewayIp || forwardedFor || "unknown").split(",")[0].trim() || "unknown";
+}
+
 async function readLocalUsers() {
   try {
     return JSON.parse(await readFile(localUsersFile, "utf8"));
@@ -113,6 +147,67 @@ function hashPassword(password, salt) {
 
 function hashSecret(value) {
   return createHmac("sha256", authPepper).update(String(value)).digest("base64url");
+}
+
+async function hitRateLimit(scope, identity, limit, windowSeconds) {
+  if (!identity || limit <= 0 || windowSeconds <= 0) return true;
+
+  const now = Math.floor(Date.now() / 1000);
+  const windowId = Math.floor(now / windowSeconds);
+  const hashedIdentity = hashSecret(`${scope}:${identity}`).slice(0, 48);
+  const pk = `RATE#${scope}#${windowId}#${hashedIdentity}`;
+  const expiresAtEpoch = (windowId + 1) * windowSeconds + 3600;
+
+  if (authStore === "file") {
+    const existing = localRateLimits.get(pk) || { count: 0, expiresAtEpoch };
+    if (existing.expiresAtEpoch <= now) localRateLimits.delete(pk);
+    if (existing.count >= limit) return false;
+    localRateLimits.set(pk, { count: existing.count + 1, expiresAtEpoch });
+    return true;
+  }
+
+  try {
+    await client.send(
+      new UpdateItemCommand({
+        TableName: tableName,
+        Key: {
+          pk: s(pk),
+        },
+        UpdateExpression: "SET #expiresAtEpoch = :expiresAtEpoch, #updatedAt = :updatedAt ADD #count :one",
+        ConditionExpression: "attribute_not_exists(#count) OR #count < :limit",
+        ExpressionAttributeNames: {
+          "#count": "count",
+          "#expiresAtEpoch": "expiresAtEpoch",
+          "#updatedAt": "updatedAt",
+        },
+        ExpressionAttributeValues: {
+          ":one": n(1),
+          ":limit": n(limit),
+          ":expiresAtEpoch": n(expiresAtEpoch),
+          ":updatedAt": s(new Date(now * 1000).toISOString()),
+        },
+      }),
+    );
+    return true;
+  } catch (error) {
+    if (error.name === "ConditionalCheckFailedException") return false;
+    throw error;
+  }
+}
+
+async function rateLimitResponse(origin, rules) {
+  for (const rule of rules) {
+    const ok = await hitRateLimit(rule.scope, rule.identity, rule.limit, rule.windowSeconds);
+    if (!ok) {
+      return response(
+        429,
+        { message: "요청이 너무 많습니다. 잠시 후 다시 시도해 주세요." },
+        origin,
+        { "Retry-After": String(Math.min(rule.windowSeconds, 300)) },
+      );
+    }
+  }
+  return null;
 }
 
 function secureMatches(expectedHash, value) {
@@ -686,6 +781,9 @@ export async function handler(event) {
   const path = event.rawPath || event.path || "";
 
   if (method === "OPTIONS") return response(204, {}, origin);
+  if (origin && !isAllowedOrigin(origin)) {
+    return response(403, { message: "허용되지 않은 출처입니다." }, origin);
+  }
 
   if (!["dynamodb", "file"].includes(authStore)) {
     return response(500, { message: "Auth store is not supported." }, origin);
@@ -697,17 +795,69 @@ export async function handler(event) {
 
   try {
     const body = readBody(event);
-    if (method === "POST" && path.endsWith("/auth/signup")) return await handleSignup(body, origin);
-    if (method === "POST" && path.endsWith("/auth/verify-email")) return await handleVerifyEmail(body, origin);
+    const ip = sourceIp(event);
+    const email = normalizeEmail(body.email);
+
+    if (method === "POST" && path.endsWith("/auth/signup")) {
+      const limited = await rateLimitResponse(origin, [
+        { scope: "signup-ip", identity: ip, limit: 8, windowSeconds: 3600 },
+        { scope: "signup-email", identity: email, limit: 4, windowSeconds: 3600 },
+      ]);
+      if (limited) return limited;
+      return await handleSignup(body, origin);
+    }
+    if (method === "POST" && path.endsWith("/auth/verify-email")) {
+      const limited = await rateLimitResponse(origin, [
+        { scope: "verify-ip", identity: ip, limit: 30, windowSeconds: 900 },
+        { scope: "verify-email", identity: email, limit: 10, windowSeconds: 900 },
+      ]);
+      if (limited) return limited;
+      return await handleVerifyEmail(body, origin);
+    }
     if (method === "POST" && path.endsWith("/auth/resend-verification")) {
+      const limited = await rateLimitResponse(origin, [
+        { scope: "resend-ip", identity: ip, limit: 12, windowSeconds: 3600 },
+        { scope: "resend-email", identity: email, limit: 4, windowSeconds: 3600 },
+      ]);
+      if (limited) return limited;
       return await handleResendVerification(body, origin);
     }
-    if (method === "POST" && path.endsWith("/auth/login")) return await handleLogin(body, origin);
-    if (method === "POST" && path.endsWith("/auth/reset/confirm")) return await handleResetConfirm(body, origin);
-    if (method === "POST" && path.endsWith("/auth/reset")) return await handleReset(body, origin);
-    if (method === "POST" && path.endsWith("/auth/google")) return await handleGoogle(body, origin);
+    if (method === "POST" && path.endsWith("/auth/login")) {
+      const limited = await rateLimitResponse(origin, [
+        { scope: "login-ip", identity: ip, limit: 40, windowSeconds: 900 },
+        { scope: "login-email", identity: email, limit: 12, windowSeconds: 900 },
+      ]);
+      if (limited) return limited;
+      return await handleLogin(body, origin);
+    }
+    if (method === "POST" && path.endsWith("/auth/reset/confirm")) {
+      const limited = await rateLimitResponse(origin, [
+        { scope: "reset-confirm-ip", identity: ip, limit: 30, windowSeconds: 900 },
+        { scope: "reset-confirm-email", identity: email, limit: 10, windowSeconds: 900 },
+      ]);
+      if (limited) return limited;
+      return await handleResetConfirm(body, origin);
+    }
+    if (method === "POST" && path.endsWith("/auth/reset")) {
+      const limited = await rateLimitResponse(origin, [
+        { scope: "reset-ip", identity: ip, limit: 12, windowSeconds: 3600 },
+        { scope: "reset-email", identity: email, limit: 4, windowSeconds: 3600 },
+      ]);
+      if (limited) return limited;
+      return await handleReset(body, origin);
+    }
+    if (method === "POST" && path.endsWith("/auth/google")) {
+      const limited = await rateLimitResponse(origin, [
+        { scope: "google-ip", identity: ip, limit: 60, windowSeconds: 900 },
+      ]);
+      if (limited) return limited;
+      return await handleGoogle(body, origin);
+    }
     return response(404, { message: "Not found." }, origin);
   } catch (error) {
+    if (error.statusCode) {
+      return response(error.statusCode, { message: error.message }, origin);
+    }
     console.error(error);
     return response(500, { message: "요청을 처리하지 못했습니다." }, origin);
   }

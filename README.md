@@ -75,7 +75,7 @@ $env:ALLOW_AWS_COSTS="1"
 npm run auth:setup:aws
 ```
 
-이 스크립트는 DynamoDB 사용자 테이블, Lambda 함수, IAM 권한, HTTP API Gateway를 생성하거나 업데이트합니다. 비밀번호는 Lambda에서 PBKDF2-SHA256, 사용자별 salt, Lambda 환경변수의 `AUTH_PEPPER`로 해시되어 저장됩니다. DynamoDB는 서버 측 암호화가 켜지고, Lambda에는 해당 테이블 접근 권한만 부여됩니다.
+이 스크립트는 DynamoDB 사용자 테이블, Lambda 함수, IAM 권한, HTTP API Gateway를 생성하거나 업데이트합니다. 비밀번호는 Lambda에서 PBKDF2-SHA256, 사용자별 salt, Lambda 환경변수의 `AUTH_PEPPER`로 해시되어 저장됩니다. DynamoDB는 서버 측 암호화가 켜지고, Lambda에는 해당 테이블 접근 권한만 부여됩니다. 인증 API는 허용된 Origin만 받으며, 로그인/회원가입/이메일 인증/비밀번호 재설정/Google 로그인 요청에 rate limit을 적용합니다.
 
 로컬에서 AWS 자격 증명이 없다면 GitHub Actions의 `Setup auth backend on AWS` 워크플로를 수동 실행할 수 있습니다. 실행 후 출력되는 값을 Repository secret에 넣습니다.
 
@@ -145,6 +145,7 @@ npm run deploy:aws
 - S3 public access 차단
 - CloudFront Origin Access Control 생성 또는 재사용
 - CloudFront 배포 생성 또는 재사용
+- CloudFront 보안 응답 헤더 정책 연결
 - `dist/` 업로드
 - CloudFront 캐시 무효화
 - `deploy-output.json`에 배포 URL 저장

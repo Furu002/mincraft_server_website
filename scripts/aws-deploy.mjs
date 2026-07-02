@@ -4,8 +4,12 @@ import {
   CreateDistributionCommand,
   CreateInvalidationCommand,
   CreateOriginAccessControlCommand,
+  CreateResponseHeadersPolicyCommand,
+  GetDistributionConfigCommand,
   ListDistributionsCommand,
   ListOriginAccessControlsCommand,
+  ListResponseHeadersPoliciesCommand,
+  UpdateDistributionCommand,
 } from "@aws-sdk/client-cloudfront";
 import {
   CreateBucketCommand,
@@ -39,6 +43,7 @@ const distDir = join(process.cwd(), "dist");
 const distributionComment = "nfoifsb Minecraft server website";
 const originId = "site-s3";
 const cachePolicyOptimized = "658327ea-f89d-4fab-a63d-7e88639e58f6";
+const securityHeadersPolicyName = "nfoifsb-site-security-headers";
 const siteDomain = process.env.SITE_DOMAIN || "";
 const certificateArn = process.env.CERTIFICATE_ARN || "";
 
@@ -144,6 +149,106 @@ async function ensureOriginAccessControl(bucket) {
   return created.OriginAccessControl.Id;
 }
 
+function siteContentSecurityPolicy() {
+  return [
+    "default-src 'self'",
+    "base-uri 'self'",
+    "object-src 'none'",
+    "frame-ancestors 'none'",
+    "script-src 'self' 'unsafe-inline' https://accounts.google.com/gsi/client",
+    "style-src 'self' 'unsafe-inline'",
+    "img-src 'self' data: https://mc-heads.net https://*.googleusercontent.com",
+    "font-src 'self' data:",
+    "connect-src 'self' https://api.mcstatus.io https://accounts.google.com https://*.execute-api.ap-northeast-1.amazonaws.com https://api.nfoifsb.kr",
+    "frame-src https://accounts.google.com",
+    "form-action 'self'",
+    "upgrade-insecure-requests",
+  ].join("; ");
+}
+
+function securityHeadersPolicyConfig() {
+  return {
+    Name: securityHeadersPolicyName,
+    Comment: "Security headers for nfoifsb Minecraft website",
+    SecurityHeadersConfig: {
+      ContentSecurityPolicy: {
+        Override: true,
+        ContentSecurityPolicy: siteContentSecurityPolicy(),
+      },
+      ContentTypeOptions: {
+        Override: true,
+      },
+      FrameOptions: {
+        Override: true,
+        FrameOption: "DENY",
+      },
+      ReferrerPolicy: {
+        Override: true,
+        ReferrerPolicy: "strict-origin-when-cross-origin",
+      },
+      StrictTransportSecurity: {
+        Override: true,
+        AccessControlMaxAgeSec: 31536000,
+        IncludeSubdomains: true,
+        Preload: false,
+      },
+      XSSProtection: {
+        Override: true,
+        Protection: true,
+        ModeBlock: true,
+      },
+    },
+    CustomHeadersConfig: {
+      Quantity: 3,
+      Items: [
+        {
+          Header: "Permissions-Policy",
+          Value: "camera=(), microphone=(), geolocation=(), payment=(), usb=()",
+          Override: true,
+        },
+        {
+          Header: "Cross-Origin-Opener-Policy",
+          Value: "same-origin-allow-popups",
+          Override: true,
+        },
+        {
+          Header: "Cross-Origin-Resource-Policy",
+          Value: "same-site",
+          Override: true,
+        },
+      ],
+    },
+  };
+}
+
+async function findResponseHeadersPolicy(name) {
+  let marker;
+  do {
+    const page = await cloudfront.send(new ListResponseHeadersPoliciesCommand({ Marker: marker, Type: "custom" }));
+    const items = page.ResponseHeadersPolicyList?.Items || [];
+    const found = items.find((item) => item.ResponseHeadersPolicy?.ResponseHeadersPolicyConfig?.Name === name);
+    if (found?.ResponseHeadersPolicy?.Id) return found.ResponseHeadersPolicy.Id;
+    marker = page.ResponseHeadersPolicyList?.NextMarker;
+  } while (marker);
+  return undefined;
+}
+
+async function ensureSecurityHeadersPolicy() {
+  const existingId = await findResponseHeadersPolicy(securityHeadersPolicyName);
+  if (existingId) {
+    log(`CloudFront response headers policy exists: ${existingId}`);
+    return existingId;
+  }
+
+  const created = await cloudfront.send(
+    new CreateResponseHeadersPolicyCommand({
+      ResponseHeadersPolicyConfig: securityHeadersPolicyConfig(),
+    }),
+  );
+  log(`Created CloudFront response headers policy: ${created.ResponseHeadersPolicy?.Id}`);
+  return created.ResponseHeadersPolicy.Id;
+}
+
 async function findDistribution() {
   let marker;
   do {
@@ -159,10 +264,34 @@ async function findDistribution() {
   return undefined;
 }
 
-async function ensureDistribution(bucket, oacId) {
+async function attachSecurityHeadersPolicy(distributionId, responseHeadersPolicyId) {
+  const current = await cloudfront.send(new GetDistributionConfigCommand({ Id: distributionId }));
+  const config = current.DistributionConfig;
+  if (config.DefaultCacheBehavior?.ResponseHeadersPolicyId === responseHeadersPolicyId) {
+    log("CloudFront security headers policy already attached");
+    return;
+  }
+
+  config.DefaultCacheBehavior = {
+    ...config.DefaultCacheBehavior,
+    ResponseHeadersPolicyId: responseHeadersPolicyId,
+  };
+
+  await cloudfront.send(
+    new UpdateDistributionCommand({
+      Id: distributionId,
+      IfMatch: current.ETag,
+      DistributionConfig: config,
+    }),
+  );
+  log("Attached CloudFront security headers policy");
+}
+
+async function ensureDistribution(bucket, oacId, responseHeadersPolicyId) {
   const existing = await findDistribution();
   if (existing?.Id) {
     log(`CloudFront distribution exists: ${existing.Id}`);
+    await attachSecurityHeadersPolicy(existing.Id, responseHeadersPolicyId);
     return existing;
   }
 
@@ -202,6 +331,7 @@ async function ensureDistribution(bucket, oacId) {
           },
           Compress: true,
           CachePolicyId: cachePolicyOptimized,
+          ResponseHeadersPolicyId: responseHeadersPolicyId,
         },
         CustomErrorResponses: {
           Quantity: 2,
@@ -379,7 +509,8 @@ async function main() {
 
   await ensureBucket(bucket);
   const oacId = await ensureOriginAccessControl(bucket);
-  const distribution = await ensureDistribution(bucket, oacId);
+  const responseHeadersPolicyId = await ensureSecurityHeadersPolicy();
+  const distribution = await ensureDistribution(bucket, oacId, responseHeadersPolicyId);
   await allowCloudFrontRead(bucket, accountId, distribution.Id);
   await uploadDist(bucket);
   await invalidate(distribution.Id);
@@ -388,6 +519,7 @@ async function main() {
     bucket,
     distributionId: distribution.Id,
     cloudfrontDomainName: distribution.DomainName,
+    responseHeadersPolicyId,
     url: `https://${distribution.DomainName}`,
     customDomain: siteDomain
       ? {

@@ -11,7 +11,12 @@ import {
   GetStagesCommand,
   UpdateApiCommand,
 } from "@aws-sdk/client-apigatewayv2";
-import { CreateTableCommand, DescribeTableCommand, DynamoDBClient } from "@aws-sdk/client-dynamodb";
+import {
+  CreateTableCommand,
+  DescribeTableCommand,
+  DynamoDBClient,
+  UpdateTimeToLiveCommand,
+} from "@aws-sdk/client-dynamodb";
 import {
   AttachRolePolicyCommand,
   CreateRoleCommand,
@@ -77,10 +82,36 @@ async function getAccountId() {
   }
 }
 
+async function ensureRateLimitTtl() {
+  try {
+    await dynamodb.send(
+      new UpdateTimeToLiveCommand({
+        TableName: tableName,
+        TimeToLiveSpecification: {
+          AttributeName: "expiresAtEpoch",
+          Enabled: true,
+        },
+      }),
+    );
+    log(`Enabled DynamoDB TTL for rate-limit records on ${tableName}`);
+  } catch (error) {
+    if (error.name === "ValidationException") {
+      log(`DynamoDB TTL already configured for ${tableName}`);
+      return;
+    }
+    if (error.name === "AccessDeniedException" || error.name === "UnauthorizedOperation") {
+      log("Could not enable DynamoDB TTL for rate-limit records; continuing without failing deploy.");
+      return;
+    }
+    throw error;
+  }
+}
+
 async function ensureTable() {
   try {
     const existing = await dynamodb.send(new DescribeTableCommand({ TableName: tableName }));
     log(`DynamoDB table exists: ${tableName}`);
+    await ensureRateLimitTtl();
     return existing.Table.TableArn;
   } catch (error) {
     if (error.name !== "ResourceNotFoundException") throw error;
@@ -118,10 +149,14 @@ async function ensureTable() {
 
   for (let attempt = 0; attempt < 30; attempt += 1) {
     const table = await dynamodb.send(new DescribeTableCommand({ TableName: tableName }));
-    if (table.Table?.TableStatus === "ACTIVE") return table.Table.TableArn;
+    if (table.Table?.TableStatus === "ACTIVE") {
+      await ensureRateLimitTtl();
+      return table.Table.TableArn;
+    }
     await sleep(2000);
   }
 
+  await ensureRateLimitTtl();
   return created.TableDescription.TableArn;
 }
 

@@ -53,6 +53,19 @@ npm run auth:setup:aws
 - HTTP API Gateway routes
 - Lambda `AUTH_PEPPER` stored in the encrypted Lambda environment
 
+## Security Controls
+
+- Passwords are stored as PBKDF2-SHA256 hashes with per-user salts and a Lambda
+  environment pepper.
+- The API rejects browser requests from origins outside `AUTH_ALLOWED_ORIGINS`.
+- JSON request bodies are capped by `AUTH_MAX_BODY_BYTES` (`16 KB` by default).
+- Login, signup, email verification, verification resend, password reset, reset
+  confirm, and Google login endpoints have shared DynamoDB-backed rate limits.
+- Rate-limit records use hashed identifiers and `expiresAtEpoch` TTL records so
+  raw IP addresses are not stored as partition keys.
+- JSON responses include `no-store`, `nosniff`, frame denial, no-referrer, and
+  API-only Content Security Policy headers.
+
 Generated output:
 
 ```text
