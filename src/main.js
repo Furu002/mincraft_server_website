@@ -84,6 +84,12 @@ const STOCKS = [
 ];
 const FINANCIAL_PERIOD_COUNT = 4;
 const FINANCIAL_QUARTER_SEASONALITY = [0.94, 1.0, 1.02, 1.08];
+const STOCK_NEWS_IMAGES = [
+  { src: "/assets/hero-world-1920.jpg", position: "50% 45%" },
+  { src: "/assets/hero-world-960.jpg", position: "18% 42%" },
+  { src: "/assets/hero-world.png", position: "72% 52%" },
+  { src: "/assets/hero-world-1920.jpg", position: "82% 38%" },
+];
 const STOCK_RANGE_CONFIG = {
   "1M": { points: 10, stepMs: 60_000, label: "1분 전" },
   "5M": { points: 16, stepMs: 60_000, label: "5분 전" },
@@ -1335,6 +1341,126 @@ function financialQuarterPeriods(meta = currentFinancialQuarter(), count = FINAN
   return periods;
 }
 
+function datePartsFromUtcDate(date) {
+  return {
+    year: date.getUTCFullYear(),
+    month: date.getUTCMonth() + 1,
+    day: date.getUTCDate(),
+  };
+}
+
+function currentStockNewsWeek(source = new Date()) {
+  const now = financialKstParts(source);
+  const today = new Date(Date.UTC(now.year, now.month - 1, now.day));
+  const mondayOffset = (today.getUTCDay() + 6) % 7;
+  const start = new Date(today);
+  start.setUTCDate(today.getUTCDate() - mondayOffset);
+  const end = new Date(start);
+  end.setUTCDate(start.getUTCDate() + 6);
+  const next = new Date(start);
+  next.setUTCDate(start.getUTCDate() + 7);
+  const startParts = datePartsFromUtcDate(start);
+  const endParts = datePartsFromUtcDate(end);
+  const nextParts = datePartsFromUtcDate(next);
+  return {
+    key: formatFinancialDate(startParts.year, startParts.month, startParts.day),
+    label: `${formatFinancialDate(startParts.year, startParts.month, startParts.day)} 주간`,
+    range: `${formatFinancialDate(startParts.year, startParts.month, startParts.day)} - ${formatFinancialDate(endParts.year, endParts.month, endParts.day)}`,
+    nextUpdate: formatFinancialDate(nextParts.year, nextParts.month, nextParts.day),
+  };
+}
+
+function seededStockNewsNumber(input) {
+  let hash = 2166136261;
+  String(input || "").split("").forEach((character) => {
+    hash ^= character.charCodeAt(0);
+    hash = Math.imul(hash, 16777619);
+  });
+  return (hash >>> 0) / 4294967295;
+}
+
+function pickStockNewsValue(values, seed, offset = 0) {
+  if (!values.length) return "";
+  const number = seededStockNewsNumber(`${seed}:${offset}`);
+  return values[Math.floor(number * values.length) % values.length];
+}
+
+function stockNewsTopic(stock) {
+  const code = stockCode(stock);
+  return {
+    DMD: "채굴 효율",
+    FARM: "수확량",
+    LOG: "건축 수요",
+    RED: "자동화 회로",
+  }[code] || "시장 수급";
+}
+
+function buildStockWeeklyNews(stock, metrics = {}, depth = {}) {
+  const code = stockCode(stock);
+  const name = stock?.name || code;
+  const week = currentStockNewsWeek();
+  const seed = `${week.key}:${code}`;
+  const topic = stockNewsTopic(stock);
+  const change = Number(stock?.change24h || 0);
+  const bidRatio = Number(depth?.bidRatio || 50);
+  const volatility = Number(metrics?.volatility || 0);
+  const quality = buildStockFinancials(stock, metrics);
+  const isBullish = change >= 0 || bidRatio >= 54 || quality.qualityScore >= 76;
+  const demandWord = pickStockNewsValue(["거래량", "호가 잔량", "체결강도", "주간 수급"], seed, 1);
+  const riskWord = pickStockNewsValue(["재고 부담", "단기 과열", "레버리지 쏠림", "마진 둔화"], seed, 2);
+  const goodImpact = Math.max(1.2, Math.abs(change) * 0.42 + quality.latest.fcfYield * 0.12 + 1.4);
+  const badImpact = -(Math.max(0.8, volatility * 0.26 + Math.abs(50 - bidRatio) * 0.05));
+  const articles = [
+    {
+      tone: isBullish ? "good" : "bad",
+      tag: isBullish ? "호재" : "악재",
+      title: isBullish
+        ? `${name}, ${topic} 개선으로 이번 주 매수 관심 확대`
+        : `${name}, ${riskWord} 이슈로 단기 변동성 경계`,
+      summary: isBullish
+        ? `${demandWord} 지표와 Quality Score ${quality.qualityScore}점이 동시에 개선되며 ${code}의 주간 투자 심리가 강해졌습니다.`
+        : `${formatStockPercent(volatility)} 변동성과 ${riskWord} 신호가 겹치며 ${code} 단기 포지션 관리 필요성이 커졌습니다.`,
+      impact: isBullish ? `예상 영향 +${goodImpact.toFixed(1)}%` : `예상 영향 ${badImpact.toFixed(1)}%`,
+    },
+    {
+      tone: bidRatio >= 55 ? "good" : "bad",
+      tag: bidRatio >= 55 ? "호재" : "악재",
+      title: bidRatio >= 55 ? `오더북 매수 압력 ${Math.round(bidRatio)}%, ${code} 유동성 개선` : `매수 압력 ${Math.round(bidRatio)}%, ${code} 호가 공백 주의`,
+      summary: bidRatio >= 55
+        ? `매수 잔량이 우위를 보이며 지정가 체결 안정성이 높아졌습니다. 단기 돌파 시 거래량 확인이 핵심입니다.`
+        : `호가 하단 방어가 약해질 수 있어 시장가 진입보다 분할 주문과 손절가 관리가 유리합니다.`,
+      impact: bidRatio >= 55 ? `수급 점수 +${Math.round(bidRatio - 50)}` : `수급 점수 -${Math.max(1, Math.round(Math.abs(50 - bidRatio)))}`,
+    },
+    {
+      tone: quality.latest.fcfYield >= 5 ? "good" : "neutral",
+      tag: quality.latest.fcfYield >= 5 ? "호재" : "중립",
+      title: `${name} AI 재무 업데이트, FCF Yield ${formatStockPercent(quality.latest.fcfYield)}`,
+      summary: `${quality.quarterMeta.label} 기준 영업이익률 ${formatStockPercent(quality.latest.operatingMargin)}, 부채비율 ${formatStockPercent(quality.latest.debtRatio)}로 산출됐습니다. 다음 분기 업데이트는 ${quality.quarterMeta.nextUpdate}입니다.`,
+      impact: quality.valuationLabel,
+    },
+    {
+      tone: volatility >= 7 ? "bad" : "neutral",
+      tag: volatility >= 7 ? "악재" : "중립",
+      title: `${week.label} 체크포인트: ${topic}, ${riskWord}, 거래량`,
+      summary: `AI 뉴스룸은 매주 월요일 KST 기준으로 새 이슈를 생성합니다. 이번 주 ${code}는 ${formatStockPercent(change, 1, true)} 가격 변동과 ${formatStockPercent(volatility)} 변동성을 함께 확인해야 합니다.`,
+      impact: `다음 생성 ${week.nextUpdate}`,
+    },
+  ];
+
+  return {
+    week,
+    code,
+    name,
+    title: `${name} 주간 AI 뉴스룸`,
+    summary: `${week.range} 기준 서버 거래 데이터, 오더북, 재무 품질을 반영해 호재·악재 뉴스를 자동 생성했습니다.`,
+    articles: articles.map((article, index) => ({
+      ...article,
+      image: STOCK_NEWS_IMAGES[index % STOCK_NEWS_IMAGES.length],
+      source: "AI MARKET DESK",
+    })),
+  };
+}
+
 function buildStockFinancials(stock, metrics = {}) {
   const code = stockCode(stock);
   const seed = stockFinancialSeed(code);
@@ -1667,6 +1793,61 @@ function renderStockFinancials(elements, stock, metrics, view = "income") {
       }),
     );
   }
+}
+
+function renderStockNews(elements, stock, metrics, depth) {
+  if (!elements?.list || !stock) return;
+  const news = buildStockWeeklyNews(stock, metrics, depth);
+  if (elements.week) elements.week.textContent = `${news.week.label} · 매주 월요일 자동생성`;
+  if (elements.code) elements.code.textContent = `${news.code} NEWSROOM`;
+  if (elements.title) elements.title.textContent = news.title;
+  if (elements.summary) elements.summary.textContent = news.summary;
+  if (elements.clock) {
+    elements.clock.replaceChildren();
+    const mode = document.createElement("span");
+    mode.textContent = "AI 자동생성";
+    const cycle = document.createElement("strong");
+    cycle.textContent = "매주 월요일";
+    const next = document.createElement("em");
+    next.textContent = `KST 다음 생성 ${news.week.nextUpdate}`;
+    elements.clock.append(mode, cycle, next);
+  }
+
+  elements.list.replaceChildren(
+    ...news.articles.map((article, index) => {
+      const card = document.createElement("article");
+      card.className = `stock-news-card is-${article.tone}`;
+      if (index === 0) card.classList.add("is-lead");
+
+      const imageWrap = document.createElement("div");
+      imageWrap.className = "stock-news-image";
+      const image = document.createElement("img");
+      image.src = article.image.src;
+      image.alt = `${news.name} ${article.tag} 뉴스 이미지`;
+      image.loading = "eager";
+      image.decoding = "async";
+      image.style.objectPosition = article.image.position;
+      imageWrap.append(image);
+
+      const body = document.createElement("div");
+      const meta = document.createElement("div");
+      meta.className = "stock-news-meta";
+      const tag = document.createElement("span");
+      tag.textContent = article.tag;
+      const source = document.createElement("em");
+      source.textContent = article.source;
+      meta.append(tag, source);
+      const title = document.createElement("strong");
+      title.textContent = article.title;
+      const summary = document.createElement("p");
+      summary.textContent = article.summary;
+      const impact = document.createElement("small");
+      impact.textContent = article.impact;
+      body.append(meta, title, summary, impact);
+      card.append(imageWrap, body);
+      return card;
+    }),
+  );
 }
 
 const stockChartStates = new WeakMap();
@@ -2544,6 +2725,14 @@ function initStockExchange() {
     metrics: document.querySelector("[data-stock-expert-metrics]"),
     risk: document.querySelector("[data-stock-risk-panel]"),
   };
+  const newsElements = {
+    week: document.querySelector("[data-stock-news-week]"),
+    code: document.querySelector("[data-stock-news-code]"),
+    title: document.querySelector("[data-stock-news-title]"),
+    summary: document.querySelector("[data-stock-news-summary]"),
+    clock: document.querySelector("[data-stock-news-clock]"),
+    list: document.querySelector("[data-stock-news-list]"),
+  };
   const financialElements = {
     period: document.querySelector("[data-stock-financial-period]"),
     code: document.querySelector("[data-stock-financial-code]"),
@@ -2687,6 +2876,7 @@ function initStockExchange() {
     });
     renderStockPortfolio(portfolioList, portfolioBalance, portfolio, market);
     renderExpertPanel(expertElements, metrics, depth, stock, orderElements, activeSide);
+    renderStockNews(newsElements, stock, metrics, depth);
     renderStockFinancials(financialElements, stock, metrics, activeFinancialView);
     renderOrderTicket(orderElements, stock, activeSide, playerProfile, portfolio, liveMarket, orderLoading, { metrics, depth });
   }
